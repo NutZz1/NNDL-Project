@@ -1,0 +1,11 @@
+data/
+*.pth
+*.pt
+*.ckpt
+outputs/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+*.egg-info/
