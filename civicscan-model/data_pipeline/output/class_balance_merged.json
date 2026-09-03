@@ -1,0 +1,44 @@
+{
+  "counts_by_category_id": {
+    "4": 4654,
+    "1": 4751,
+    "3": 7031,
+    "2": 3498,
+    "6": 15939,
+    "5": 9232,
+    "7": 2435,
+    "8": 752
+  },
+  "counts_by_category_name": {
+    "pothole": 4654,
+    "crack_longitudinal": 4751,
+    "crack_alligator": 7031,
+    "crack_transverse": 3498,
+    "litter": 15939,
+    "crack_structural": 9232,
+    "manhole_damaged": 2435,
+    "manhole_missing": 752
+  },
+  "suggested_loss_weights_by_category_id": {
+    "1": 0.609,
+    "2": 0.8271,
+    "3": 0.4115,
+    "4": 0.6217,
+    "5": 0.3134,
+    "6": 0.1815,
+    "7": 1.1882,
+    "8": 3.8475
+  },
+  "capped_loss_weights_by_category_id": {
+    "1": 0.609,
+    "2": 0.8271,
+    "3": 0.4115,
+    "4": 0.6217,
+    "5": 0.3134,
+    "6": 0.1815,
+    "7": 1.1882,
+    "8": 3.8475
+  },
+  "cap_ratio_vs_median": 10.0,
+  "total_annotations": 48292
+}
