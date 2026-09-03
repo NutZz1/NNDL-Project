@@ -9,3 +9,29 @@ __pycache__/
 venv/
 .DS_Store
 *.egg-info/
+# Converted dataset JSONs — 148MB and fully reproducible from the converters.
+# The two small stats files ARE tracked: they are Member B's handoff artifact.
+civicscan-model/data_pipeline/output/*
+!civicscan-model/data_pipeline/output/class_weights.json
+!civicscan-model/data_pipeline/output/class_balance_merged.json
+
+# Vendored clone of the TACO repo (its own git repo + ~1GB of downloaded images)
+raw_dataset/
+
+# --- added at dataset-v1 handoff ---
+# Raw source data must never enter git. These are safety nets in case a
+# source is ever extracted inside the repo instead of outside it.
+*.zip
+Final-Dataset-Vol*/
+civicscan_exports/
+Manhole Cover Dataset*/
+Crackseg9k/
+
+# Generated views of the dataset report. The markdown is the tracked source
+# of truth and the .docx is the formal deliverable; the HTML (400 KB, mostly
+# base64-embedded fonts) and the PDF are regenerated from them.
+civicscan-model/data_pipeline/docs/*.html
+civicscan-model/data_pipeline/docs/*.pdf
+
+# Word lock files
+~$*.docx
