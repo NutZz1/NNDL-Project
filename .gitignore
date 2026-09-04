@@ -1,4 +1,5 @@
-data/
+/civicscan-model/data/
+!*/training/civicscan/data/
 *.pth
 *.pt
 *.ckpt
