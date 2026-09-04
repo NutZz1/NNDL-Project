@@ -1,0 +1,27 @@
+# Shared across all three members. Hardware-dependent fields (variant,
+# resolution, batch, accum, amp_dtype, workers) are resolved at runtime by
+# civicscan/autoconfig.py from the detected GPU — do not set them here.
+
+seed: 42
+
+# Paths — EDIT THESE to match your machine.
+train_json: "../data_pipeline/output/splits/train.json"
+val_json: "../data_pipeline/output/splits/val.json"
+test_json: "../data_pipeline/output/splits/test.json"
+image_root: "../../raw_dataset"
+class_weights: "../data_pipeline/output/class_weights.json"
+
+use_class_weights: true
+ema: true
+ema_decay: 0.9998
+clip_grad: 0.1
+warmup_epochs: 3
+lr_final_factor: 0.01
+patience: 10          # convergence criterion window
+hard_patience: 25     # absolute early stop
+print_every: 50
+
+# evaluation
+score_thresh: 0.001
+max_det: 300
+nms_iou: 0.7

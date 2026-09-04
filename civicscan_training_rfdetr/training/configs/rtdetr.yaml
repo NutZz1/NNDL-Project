@@ -1,0 +1,19 @@
+inherit: base.yaml
+model: rtdetr
+
+pretrained: true              # ResNet ImageNet weights
+aux_loss: true
+
+optimizer: adamw
+lr: 0.0001
+backbone_lr: 0.00001
+weight_decay: 0.0001
+epochs: 60
+
+# IDENTICAL to rfdetr.yaml by design — this is the experimental control.
+cost_class: 2.0
+cost_bbox: 5.0
+cost_giou: 2.0
+w_class: 2.0
+w_bbox: 5.0
+w_giou: 2.0

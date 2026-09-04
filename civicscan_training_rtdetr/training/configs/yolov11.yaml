@@ -1,0 +1,17 @@
+inherit: base.yaml
+model: yolov11
+
+reg_max: 16
+tal_topk: 10
+
+optimizer: sgd
+lr: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+epochs: 100
+hard_patience: 25
+
+# loss weights
+w_box: 7.5
+w_cls: 0.5
+w_dfl: 1.5
