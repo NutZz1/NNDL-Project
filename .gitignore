@@ -36,3 +36,8 @@ civicscan-model/data_pipeline/docs/*.pdf
 
 # Word lock files
 ~$*.docx
+
+# Trained RF-DETR checkpoint is tracked via Git LFS on the training branch
+# (see .gitattributes). The blanket *.pt rule above still applies everywhere
+# else, so no other checkpoint can be committed by accident.
+!civicscan_training_rfdetr/training/runs/rfdetr/best.pt

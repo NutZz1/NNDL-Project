@@ -5,11 +5,11 @@
 seed: 42
 
 # Paths — EDIT THESE to match your machine.
-train_json: "../data_pipeline/output/splits/train.json"
-val_json: "../data_pipeline/output/splits/val.json"
-test_json: "../data_pipeline/output/splits/test.json"
-image_root: "../../raw_dataset"
-class_weights: "../data_pipeline/output/class_weights.json"
+train_json: "C:/Users/sreep/OneDrive/Desktop/NNDL-CivicScan/civicscan-model/data_pipeline/output/splits/train.json"
+val_json: "C:/Users/sreep/OneDrive/Desktop/NNDL-CivicScan/civicscan-model/data_pipeline/output/splits/val.json"
+test_json: "C:/Users/sreep/OneDrive/Desktop/NNDL-CivicScan/civicscan-model/data_pipeline/output/splits/test.json"
+image_root: "C:/Users/sreep/Downloads/civicscan_images"
+class_weights: "C:/Users/sreep/OneDrive/Desktop/NNDL-CivicScan/civicscan-model/data_pipeline/output/class_weights.json"
 
 use_class_weights: true
 ema: true

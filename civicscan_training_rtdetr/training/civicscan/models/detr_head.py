@@ -32,7 +32,11 @@ class MLP(nn.Module):
 
 def sine_pos_embed(h, w, dim, device, temperature=10000):
     """2-D sine positional embedding, [h*w, dim]."""
-    d = dim // 4
+    # dim // 2 per axis, not dim // 4: the y and x halves are concatenated at
+    # the end, so each must carry dim/2 channels for the result to be `dim`
+    # wide. With dim // 4 this returned exactly half the requested width and
+    # the head failed on `pe + level_embed` (128 vs 256).
+    d = dim // 2
     y = torch.arange(h, device=device, dtype=torch.float32).unsqueeze(1).repeat(1, w)
     x = torch.arange(w, device=device, dtype=torch.float32).unsqueeze(0).repeat(h, 1)
     y = y / (h + 1e-6) * 2 * math.pi
