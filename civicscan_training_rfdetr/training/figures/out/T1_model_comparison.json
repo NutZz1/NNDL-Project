@@ -1,0 +1,17 @@
+[
+  {
+    "model": "rfdetr_run1"
+  },
+  {
+    "model": "rfdetr_run2",
+    "val_mAP50": 0.46,
+    "val_mAP5095": 0.2575,
+    "val_AP_small": 0.0295,
+    "val_AP_medium": 0.2063,
+    "val_AP_large": 0.3378,
+    "val_precision": 0.5654,
+    "val_recall": 0.7956,
+    "best_epoch": 56,
+    "epochs_run": 60
+  }
+]

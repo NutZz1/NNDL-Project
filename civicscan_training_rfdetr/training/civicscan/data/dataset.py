@@ -30,11 +30,23 @@ from ..masking import build_valid_mask, assert_targets_valid
 
 class CivicScanCocoDataset(Dataset):
     def __init__(self, ann_file, image_root, transforms=None,
-                 skip_missing_images=True, strict=True):
+                 skip_missing_images=True, strict=True, decode_max=None):
         self.ann_file = ann_file
         self.image_root = image_root
         self.transforms = transforms
         self.strict = strict
+        # Reduced-size JPEG decoding. TACO photos are 2448x3264 (8 MP) and
+        # each one costs ~20x the decode time of a 600x600 RDD frame, which
+        # made the data loader the bottleneck for the fast models (YOLO-s
+        # runs ~100 img/s on the GPU; 8 workers fed it 57 img/s). PIL's
+        # draft() lets libjpeg decode at 1/2, 1/4 or 1/8 scale, choosing the
+        # largest reduction that still yields >= decode_max on both sides,
+        # so nothing is decoded smaller than it will be resized to anyway.
+        # Boxes are scaled to the decoded size below; orig_size stays the
+        # annotation-file size so evaluation still maps back to GT pixels.
+        # Set to ~2x the training resolution: a RandomScaleCrop at 0.6 of a
+        # 2x-resolution decode is still >= resolution, so no upsampling.
+        self.decode_max = decode_max
 
         with open(ann_file, "r") as f:
             data = json.load(f)
@@ -91,14 +103,20 @@ class CivicScanCocoDataset(Dataset):
 
     def __getitem__(self, i):
         im, anns, path = self.records[i]
-        img = Image.open(path).convert("RGB")
-        w, h = img.size
+        img = Image.open(path)
+        ow, oh = img.size                      # true size, from the header
+        if self.decode_max and img.format == "JPEG":
+            img.draft("RGB", (self.decode_max, self.decode_max))
+        img = img.convert("RGB")
+        w, h = img.size                        # decoded size (<= original)
+        sx, sy = w / ow, h / oh
 
         boxes, labels = [], []
         for a in anns:
             x, y, bw, bh = a["bbox"]
             if bw <= 1 or bh <= 1:
                 continue
+            x, y, bw, bh = x * sx, y * sy, bw * sx, bh * sy
             x0, y0 = max(0.0, x), max(0.0, y)
             x1, y1 = min(float(w), x + bw), min(float(h), y + bh)
             if x1 <= x0 or y1 <= y0:
@@ -112,7 +130,7 @@ class CivicScanCocoDataset(Dataset):
             "labels": torch.tensor(labels, dtype=torch.long),
             "valid_mask": self.valid_masks[im["id"]].clone(),
             "image_id": torch.tensor(im["id"], dtype=torch.long),
-            "orig_size": torch.tensor([h, w], dtype=torch.long),
+            "orig_size": torch.tensor([oh, ow], dtype=torch.long),
             "source": im.get("source_dataset", "unknown"),
         }
         if self.strict:

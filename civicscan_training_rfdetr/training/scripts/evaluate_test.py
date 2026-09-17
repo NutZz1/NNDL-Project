@@ -42,7 +42,8 @@ def main():
     model.to(cfg["device"]).eval()
 
     ds = CivicScanCocoDataset(cfg["test_json"], cfg["image_root"],
-                              build_transforms(cfg["resolution"], False))
+                              build_transforms(cfg["resolution"], False),
+                              decode_max=2 * cfg["resolution"])
     attach_coco_gt(ds, cfg["test_json"])
     print(ds.stats())
     dl = torch.utils.data.DataLoader(ds, batch_size=max(1, cfg["batch"]),

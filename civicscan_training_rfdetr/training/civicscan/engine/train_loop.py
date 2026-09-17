@@ -60,7 +60,13 @@ def lr_lambda_factory(cfg, steps_per_epoch):
     return fn
 
 
-def train(model, criterion, train_loader, val_loader, cfg, device, run_dir):
+def train(model, criterion, train_loader, val_loader, cfg, device, run_dir,
+          resume=None):
+    """`resume`: path to a last.pt written by this loop. Restores the raw and
+    EMA weights, optimizer state, schedule position, best-so-far and the
+    epoch counter, and appends to the existing train_log.csv. Added after
+    three multi-hour runs were killed by sleep/RAM spikes with no way back
+    but epoch 1."""
     os.makedirs(run_dir, exist_ok=True)
     logger = RunLogger(run_dir)
     model.to(device)
@@ -79,8 +85,30 @@ def train(model, criterion, train_loader, val_loader, cfg, device, run_dir):
     history, no_improve, val_loss_rise = [], 0, 0
     prev_val_loss = float("inf")
     size = cfg["resolution"]
+    start_epoch = 1
 
-    for epoch in range(1, cfg["epochs"] + 1):
+    if resume:
+        ck = torch.load(resume, map_location="cpu")
+        model.load_state_dict(ck.get("model_raw", ck["model"]))
+        start_epoch = ck["epoch"] + 1
+        if ema:
+            ema.ema.load_state_dict(ck["model"])          # saved weights are EMA
+            # older last.pt files predate the state fields: treat the EMA as
+            # fully warmed up rather than restarting its decay ramp
+            ema.updates = ck.get("ema_updates", (start_epoch - 1) * steps)
+        if "optimizer" in ck:
+            opt.load_state_dict(ck["optimizer"])
+        for _ in range((start_epoch - 1) * steps):        # fast-forward cosine
+            sched.step()
+        best = dict(ck.get("best") or
+                    {"mAP5095": ck["metrics"].get("val_mAP5095", -1.0),
+                     "epoch": ck["epoch"]})
+        prev_val_loss = ck.get("metrics", {}).get("val_loss") or prev_val_loss
+        print(f"[resume] {resume}: continuing at epoch {start_epoch}, "
+              f"best so far {best['mAP5095']:.4f} (epoch {best['epoch']}), "
+              f"lr {opt.param_groups[-1]['lr']:.2e}", flush=True)
+
+    for epoch in range(start_epoch, cfg["epochs"] + 1):
         model.train()
         t0 = time.time()
         if use_cuda:
@@ -155,7 +183,11 @@ def train(model, criterion, train_loader, val_loader, cfg, device, run_dir):
             best = {"mAP5095": metrics["val_mAP5095"], "epoch": epoch}
             _save(eval_model, opt, epoch, cfg, metrics,
                   os.path.join(run_dir, "best.pt"))
-        _save(eval_model, opt, epoch, cfg, metrics, os.path.join(run_dir, "last.pt"))
+        # last.pt carries the full training state so a killed run can resume;
+        # best.pt stays weights-only (it is the artefact that gets shipped).
+        _save(eval_model, opt, epoch, cfg, metrics, os.path.join(run_dir, "last.pt"),
+              extra={"model_raw": model.state_dict(), "optimizer": opt.state_dict(),
+                     "ema_updates": ema.updates if ema else 0, "best": best})
 
         no_improve = 0 if (metrics["val_mAP5095"] > best["mAP5095"] - 0.002
                            and improved) else no_improve + 1
@@ -180,7 +212,10 @@ def train(model, criterion, train_loader, val_loader, cfg, device, run_dir):
     return best, history
 
 
-def _save(model, opt, epoch, cfg, metrics, path):
-    torch.save({"model": model.state_dict(), "epoch": epoch, "config": cfg,
-                "metrics": {k: v for k, v in metrics.items()
-                            if isinstance(v, (int, float))}}, path)
+def _save(model, opt, epoch, cfg, metrics, path, extra=None):
+    payload = {"model": model.state_dict(), "epoch": epoch, "config": cfg,
+               "metrics": {k: v for k, v in metrics.items()
+                           if isinstance(v, (int, float))}}
+    if extra:
+        payload.update(extra)
+    torch.save(payload, path)

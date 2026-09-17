@@ -31,30 +31,44 @@ class HungarianMatcher(nn.Module):
         """outputs: logits [B,Q,C], boxes [B,Q,4] cxcywh normalised
         targets: list of dicts with boxes_norm [N,4] cxcywh, labels [N]
         valid_mask: [B,C] bool
-        returns list of (query_idx, target_idx) per image"""
+        returns list of (query_idx, target_idx) per image
+
+        The cost matrix is computed for the whole batch in one shot and moved
+        to the CPU with a single transfer; the per-image assignment is then
+        read off block-by-block. Per-image results are identical to computing
+        each image on its own — the batching only removes B-1 GPU->CPU syncs
+        per call, which on a laptop GPU was a third of the training step.
+        """
         logits, boxes = outputs["pred_logits"], outputs["pred_boxes"]
         b, q, _ = logits.shape
+        sizes = [t["labels"].numel() for t in targets]
+        empty = (torch.as_tensor([], dtype=torch.long),
+                 torch.as_tensor([], dtype=torch.long))
+        if sum(sizes) == 0:
+            return [empty] * b
+
+        # MASK 1: invalid classes cannot be matched.
+        lg = mask_class_logits(logits, valid_mask).flatten(0, 1)      # [B*Q, C]
+        p = lg.sigmoid()
+        neg = (1 - self.alpha) * (p ** self.gamma) * (-(1 - p + 1e-8).log())
+        pos = self.alpha * ((1 - p) ** self.gamma) * (-(p + 1e-8).log())
+        tgt_labels = torch.cat([t["labels"] for t in targets])
+        tgt_boxes = torch.cat([t["boxes_norm"] for t in targets])
+        cost_cls = (pos - neg)[:, tgt_labels]                           # [B*Q, N]
+        flat_boxes = boxes.flatten(0, 1)
+        cost_bbox = torch.cdist(flat_boxes, tgt_boxes, p=1)
+        cost_giou = -generalized_box_iou(cxcywh_to_xyxy(flat_boxes),
+                                         cxcywh_to_xyxy(tgt_boxes))
+        c = (self.cost_class * cost_cls + self.cost_bbox * cost_bbox
+             + self.cost_giou * cost_giou).view(b, q, -1)
+        c = torch.nan_to_num(c, nan=1e4, posinf=1e4, neginf=-1e4).float().cpu()
+
         indices = []
-        for i in range(b):
-            tgt = targets[i]
-            n = tgt["labels"].numel()
-            if n == 0:
-                indices.append((torch.as_tensor([], dtype=torch.long),
-                                torch.as_tensor([], dtype=torch.long)))
+        for i, ci in enumerate(c.split(sizes, -1)):
+            if sizes[i] == 0:
+                indices.append(empty)
                 continue
-            # MASK 1: invalid classes cannot be matched.
-            lg = mask_class_logits(logits[i], valid_mask[i])
-            p = lg.sigmoid()
-            neg = (1 - self.alpha) * (p ** self.gamma) * (-(1 - p + 1e-8).log())
-            pos = self.alpha * ((1 - p) ** self.gamma) * (-(p + 1e-8).log())
-            cost_cls = (pos - neg)[:, tgt["labels"]]
-            cost_bbox = torch.cdist(boxes[i], tgt["boxes_norm"], p=1)
-            cost_giou = -generalized_box_iou(cxcywh_to_xyxy(boxes[i]),
-                                             cxcywh_to_xyxy(tgt["boxes_norm"]))
-            c = (self.cost_class * cost_cls + self.cost_bbox * cost_bbox
-                 + self.cost_giou * cost_giou)
-            c = torch.nan_to_num(c, nan=1e4, posinf=1e4, neginf=-1e4)
-            r, col = linear_sum_assignment(c.float().cpu().numpy())
+            r, col = linear_sum_assignment(ci[i].numpy())
             indices.append((torch.as_tensor(r, dtype=torch.long),
                             torch.as_tensor(col, dtype=torch.long)))
         return indices
@@ -74,10 +88,11 @@ class SetCriterion(nn.Module):
             "class_weights",
             torch.ones(num_classes) if class_weights is None else class_weights.float())
 
-    def _layer_loss(self, out, targets, valid_mask, num_boxes):
+    def _layer_loss(self, out, targets, valid_mask, num_boxes, idx=None):
         logits, boxes = out["pred_logits"], out["pred_boxes"]
         b, q, c = logits.shape
-        idx = self.matcher(out, targets, valid_mask)
+        if idx is None:
+            idx = self.matcher(out, targets, valid_mask)
 
         target_onehot = torch.zeros_like(logits)
         src_boxes, tgt_boxes = [], []
@@ -107,16 +122,31 @@ class SetCriterion(nn.Module):
 
     def forward(self, outputs, targets, valid_mask):
         num_boxes = max(1, sum(t["labels"].numel() for t in targets))
-        losses = self._layer_loss(outputs, targets, valid_mask, num_boxes)
+        layers = [outputs]
+        if self.aux_loss and "aux_outputs" in outputs:
+            layers += list(outputs["aux_outputs"])
+
+        # One matcher call for every decoder layer at once: the layers are
+        # stacked along the batch axis, so the (L x B) assignments come back
+        # from a single cost matrix and a single GPU->CPU transfer. Each
+        # (layer, image) block is still solved independently, so the
+        # assignments are exactly those of L separate calls.
+        L, b = len(layers), len(targets)
+        stacked = {"pred_logits": torch.cat([l["pred_logits"] for l in layers], 0),
+                   "pred_boxes": torch.cat([l["pred_boxes"] for l in layers], 0)}
+        idx_all = self.matcher(stacked, targets * L, valid_mask.repeat(L, 1))
+
+        losses = self._layer_loss(layers[0], targets, valid_mask, num_boxes,
+                                  idx=idx_all[:b])
         total = (self.w_class * losses["loss_cls"] + self.w_bbox * losses["loss_bbox"]
                  + self.w_giou * losses["loss_giou"])
-        if self.aux_loss and "aux_outputs" in outputs:
-            for j, aux in enumerate(outputs["aux_outputs"]):
-                al = self._layer_loss(aux, targets, valid_mask, num_boxes)
-                total = total + (self.w_class * al["loss_cls"]
-                                 + self.w_bbox * al["loss_bbox"]
-                                 + self.w_giou * al["loss_giou"])
-                for k, v in al.items():
-                    losses[f"{k}_aux{j}"] = v.detach()
+        for j, aux in enumerate(layers[1:]):
+            al = self._layer_loss(aux, targets, valid_mask, num_boxes,
+                                  idx=idx_all[(j + 1) * b:(j + 2) * b])
+            total = total + (self.w_class * al["loss_cls"]
+                             + self.w_bbox * al["loss_bbox"]
+                             + self.w_giou * al["loss_giou"])
+            for k, v in al.items():
+                losses[f"{k}_aux{j}"] = v.detach()
         losses["loss_total"] = total
         return losses

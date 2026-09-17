@@ -41,3 +41,5 @@ civicscan-model/data_pipeline/docs/*.pdf
 # (see .gitattributes). The blanket *.pt rule above still applies everywhere
 # else, so no other checkpoint can be committed by accident.
 !civicscan_training_rfdetr/training/runs/rfdetr/best.pt
+!civicscan_training_rfdetr/training/runs/rfdetr_run2/best.pt
+!civicscan_training_rfdetr/training/runs/rfdetr_run4_700px/best.pt

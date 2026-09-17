@@ -125,8 +125,13 @@ class YOLOLoss(nn.Module):
         return loss.view(-1, 4).mean(1)
 
     def forward(self, outputs, targets, valid_mask):
-        cls_logits = outputs["pred_cls"]                    # [B,A,C]
-        dist = outputs["pred_dist"]                         # [B,A,4*reg_max]
+        # Loss and assignment run in fp32 regardless of the autocast dtype of
+        # the forward pass (the model itself stays bf16/fp16). Under bf16 the
+        # assigner otherwise builds target_scores in bf16 and index-puts fp32
+        # alignment values into it, which raises on the first batch; and the
+        # TAL power/IoU arithmetic is not something to do in 8-bit mantissas.
+        cls_logits = outputs["pred_cls"].float()            # [B,A,C]
+        dist = outputs["pred_dist"].float()                 # [B,A,4*reg_max]
         anchors, strides = outputs["anchors"], outputs["strides"]
         b, a, c = cls_logits.shape
         dev = cls_logits.device

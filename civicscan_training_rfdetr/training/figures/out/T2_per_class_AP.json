@@ -1,0 +1,12 @@
+{
+  "rfdetr_run2": {
+    "crack_longitudinal": 0.1314,
+    "crack_transverse": 0.0776,
+    "crack_alligator": 0.271,
+    "pothole": 0.1171,
+    "crack_structural": 0.169,
+    "litter": 0.2964,
+    "manhole_damaged": 0.6207,
+    "manhole_missing": 0.3771
+  }
+}

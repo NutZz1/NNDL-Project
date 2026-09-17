@@ -1,0 +1,72 @@
+{
+  "masked": {
+    "val_mAP50": 0.4599807167362441,
+    "val_mAP5095": 0.25753937850190617,
+    "val_AP_small": 0.02954726241155148,
+    "val_AP_medium": 0.2062720480877828,
+    "val_AP_large": 0.3378196805864621,
+    "val_precision": 0.5653928608742159,
+    "val_recall": 0.795561721627822,
+    "AP_crack_longitudinal": 0.13140937207317016,
+    "AP_crack_transverse": 0.07761298112221682,
+    "AP_crack_alligator": 0.27096244047870977,
+    "AP_pothole": 0.11714767381015369,
+    "AP_crack_structural": 0.16899717924313676,
+    "AP_litter": 0.29644504245660896,
+    "AP_manhole_damaged": 0.620680760123953,
+    "AP_manhole_missing": 0.37705957870730034,
+    "per_source_mAP50": {
+      "RDD2022": 0.3701649791431696,
+      "TACO": 0.3969776044659867,
+      "TrashTrail": 0.543441146926136,
+      "Crackseg9k": 0.2182454273803857,
+      "BridgeDeckCsust": 0.37957282645343465,
+      "RoboflowManhole": 0.7517197414634581,
+      "RoboflowManholeG8rvh": 0.6475777244762917,
+      "RoboflowManholeJinggai": 0.7080476770771578
+    },
+    "val_loss": null,
+    "num_detections": 290391
+  },
+  "unmasked": {
+    "val_mAP50": 0.3412981566114194,
+    "val_mAP5095": 0.198842349061526,
+    "val_AP_small": 0.02481119714877773,
+    "val_AP_medium": 0.149431786989124,
+    "val_AP_large": 0.25181122943539,
+    "val_precision": 0.4505105397766172,
+    "val_recall": 0.795561721627822,
+    "AP_crack_longitudinal": 0.11403934995082611,
+    "AP_crack_transverse": 0.06605423396536664,
+    "AP_crack_alligator": 0.21714846147939812,
+    "AP_pothole": 0.055507708449496665,
+    "AP_crack_structural": 0.11749485327823325,
+    "AP_litter": 0.16898745305727775,
+    "AP_manhole_damaged": 0.5494973430007285,
+    "AP_manhole_missing": 0.3020093893108812,
+    "per_source_mAP50": {
+      "RDD2022": 0.3701649791431696,
+      "TACO": 0.3969776044659867,
+      "TrashTrail": 0.543441146926136,
+      "Crackseg9k": 0.2182454273803857,
+      "BridgeDeckCsust": 0.37957282645343465,
+      "RoboflowManhole": 0.7517197414634581,
+      "RoboflowManholeG8rvh": 0.6475777244762917,
+      "RoboflowManholeJinggai": 0.7080476770771578
+    },
+    "val_loss": null,
+    "num_detections": 1401600
+  },
+  "checkpoint": "runs/rfdetr_run2/best.pt",
+  "best_epoch": 56,
+  "config": {
+    "model": "rfdetr",
+    "variant": "small",
+    "resolution": 560,
+    "batch": 8,
+    "accum": 2,
+    "effective_batch": 16,
+    "gpu_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "tier": "sm"
+  }
+}

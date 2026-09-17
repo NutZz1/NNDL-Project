@@ -7,7 +7,8 @@ unannotated objects count as false positives and val mAP is depressed by an
 amount that varies with the source mix of the split. Declare it in the report.
 
 Reported: mAP@50, mAP@50-95, AP small/medium/large, per-class AP@50-95,
-precision and recall at IoU 0.5, and per-source mAP.
+precision (F1-optimal operating point) and recall at IoU 0.5, and
+per-source mAP.
 """
 
 import contextlib
@@ -39,14 +40,37 @@ def _coco_eval(coco_gt, dets, img_ids, cat_ids=None):
 
 
 def _pr_at_50(e):
-    """Precision and recall at IoU 0.5, averaged over classes, max-dets 100."""
+    """Precision and recall at IoU 0.5, averaged over classes, max-dets 100.
+
+    precision : per class, the precision at the F1-optimal point of the COCO
+                interpolated PR curve (the operating point a deployment would
+                pick), averaged over classes that have ground truth. Averaging
+                the whole curve instead — which is what this used to do — is
+                by definition AP@50, so the old val_precision column was a
+                copy of val_mAP50. Do not read run-1 (epoch <= 31) precision
+                values as precision. A fixed score threshold was rejected:
+                sigmoid-focal DETR scores are low (epoch-31 median per-image
+                max score 0.18), so a 0.5 cut reported 0.0 for most classes.
+    recall    : COCO recall at IoU 0.5 / 100 dets (max achievable recall at
+                the 0.001 score floor), unchanged from run 1 so the column
+                stays comparable across runs.
+    """
     if e is None:
         return 0.0, 0.0
-    p = e.eval["precision"][0, :, :, 0, 2]
-    r = e.eval["recall"][0, :, 0, 2]
-    p = p[p > -1]
-    r = r[r > -1]
-    return float(p.mean()) if p.size else 0.0, float(r.mean()) if r.size else 0.0
+    prec = e.eval["precision"][0, :, :, 0, 2]     # [R, K] at IoU .5
+    rec_thrs = np.asarray(e.params.recThrs)       # [R]
+    rec = e.eval["recall"][0, :, 0, 2]            # [K]
+    ps = []
+    for k in range(prec.shape[1]):
+        pk = prec[:, k]
+        if not (pk > -1).any():
+            continue                              # no GT for this class
+        pk = np.where(pk > -1, pk, 0.0)
+        f1 = 2 * pk * rec_thrs / np.clip(pk + rec_thrs, 1e-9, None)
+        ps.append(pk[int(np.argmax(f1))])
+    rec = rec[rec > -1]
+    return (float(np.mean(ps)) if ps else 0.0,
+            float(rec.mean()) if rec.size else 0.0)
 
 
 @torch.no_grad()

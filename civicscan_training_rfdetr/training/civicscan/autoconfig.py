@@ -20,7 +20,12 @@ PROFILES = {
         "xl":   dict(variant="base",  resolution=644, batch=8, accum=2, queries=300, grad_ckpt=False),
         "lg":   dict(variant="base",  resolution=560, batch=4, accum=4, queries=300, grad_ckpt=False),
         "md":   dict(variant="small", resolution=560, batch=4, accum=4, queries=300, grad_ckpt=False),
-        "sm":   dict(variant="small", resolution=560, batch=2, accum=8, queries=300, grad_ckpt=True),
+        # sm re-measured on an RTX 4060 Laptop (8 GB): batch 2 peaked at 1.78 GB
+        # and ran 5.3 img/s; batch 8 peaks at 5.0 GB and runs ~10 img/s. Batch 16
+        # spills past 8 GB into shared memory and collapses to 2 img/s. grad_ckpt
+        # is not implemented by any model, so it is False everywhere it is not
+        # actually needed.
+        "sm":   dict(variant="small", resolution=560, batch=8, accum=2, queries=300, grad_ckpt=False),
         "xs":   dict(variant="nano",  resolution=448, batch=2, accum=8, queries=150, grad_ckpt=True),
         "tiny": dict(variant="nano",  resolution=392, batch=1, accum=16, queries=150, grad_ckpt=True),
     },
@@ -115,19 +120,30 @@ def resolve(model, gpu_index=None, override=None):
     cfg["gpu_vram_gb"] = dev["vram_gb"]
     cfg["gpu_capability"] = dev["capability"]
     cfg["amp_dtype"] = "bf16" if supports_bf16(dev["capability"]) else "fp16"
-    cfg["num_workers"] = 2 if platform.system() == "Windows" else 4
+    # Windows workers measured on a 16-thread laptop at batch 8 / 560 px:
+    # 2 -> 13 img/s, 4 -> 19 img/s, 8 -> 30 img/s. 4 keeps the GPU (~10 img/s)
+    # fed with margin without starving the main process's Hungarian matching.
+    cfg["num_workers"] = 4 if platform.system() == "Windows" else 4
     cfg["pin_memory"] = platform.system() != "Windows"
     cfg["persistent_workers"] = cfg["num_workers"] > 0
     target = EFFECTIVE_BATCH[model]
     if cfg["batch"] * cfg["accum"] != target:
         cfg["accum"] = max(1, round(target / cfg["batch"]))
     cfg["effective_batch"] = cfg["batch"] * cfg["accum"]
-    if model == "rfdetr" and cfg["resolution"] % 14 != 0:
-        cfg["resolution"] = (cfg["resolution"] // 14) * 14
     if override:
         cfg.update({k: v for k, v in override.items() if v is not None})
         cfg["effective_batch"] = cfg["batch"] * cfg["accum"]
         cfg["overridden"] = sorted(override)
+    # Resolution must divide the backbone's grid, also when overridden from the
+    # command line: DINOv2 has a 14 px patch; YOLO's P5 is stride 32 and the
+    # neck concatenates upsampled P5 with P4, so 560 crashes (35 vs 36).
+    # Snap to the nearest valid size rather than silently rounding down.
+    step = {"rfdetr": 14, "yolov11": 32, "rtdetr": 32}[model]
+    if cfg["resolution"] % step != 0:
+        wanted = cfg["resolution"]
+        cfg["resolution"] = int(round(wanted / step)) * step
+        print(f"[autoconfig] resolution {wanted} is not a multiple of {step} "
+              f"for {model}; using {cfg['resolution']}")
     return cfg
 
 
