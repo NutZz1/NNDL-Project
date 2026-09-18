@@ -4,8 +4,9 @@ REM
 REM   resolution 576  : YOLO needs a multiple of 32; 560 crashes in the neck (35 vs 36).
 REM                     576 is the nearest valid size above 560.
 REM   batch 16 x 1    : effective batch 16, same as every RF-DETR run. 4.1 GB VRAM.
-REM   workers 8       : the loader is the bottleneck for this small model; 8 is the
-REM                     practical max on 8 physical cores / 15 GB RAM (12 stalled).
+REM   workers 6       : with reduced JPEG decoding the loader does ~100 img/s at 6
+REM                     workers, above the ~60 img/s the GPU sustains; 8 gained
+REM                     nothing and pushed RAM over the edge twice (WinError 1455).
 REM   from scratch    : this reimplementation has no pretrained weights.
 REM
 REM Expect ~8 min/epoch (6 train + 2 validation)  ->  ~8 h for 60 epochs.
@@ -28,7 +29,7 @@ if exist runs\yolov11_576\last.pt (
     --run-dir runs\yolov11_576 ^
     --resolution 576 ^
     --batch 16 --accum 1 ^
-    --workers 8 ^
+    --workers 6 ^
     --epochs 60 %RESUME% ^
     2>&1 | "C:\Program Files\Git\usr\bin\tee.exe" runs\yolov11_576\console.log
 

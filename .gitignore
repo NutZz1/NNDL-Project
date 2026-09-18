@@ -43,3 +43,4 @@ civicscan-model/data_pipeline/docs/*.pdf
 !civicscan_training_rfdetr/training/runs/rfdetr/best.pt
 !civicscan_training_rfdetr/training/runs/rfdetr_run2/best.pt
 !civicscan_training_rfdetr/training/runs/rfdetr_run4_700px/best.pt
+!civicscan_training_rfdetr/training/runs/yolov11_576/best.pt

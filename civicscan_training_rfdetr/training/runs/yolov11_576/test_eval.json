@@ -1,0 +1,43 @@
+{
+  "masked": {
+    "val_mAP50": 0.1153511290781737,
+    "val_mAP5095": 0.05655400286581935,
+    "val_AP_small": 0.01675857635296495,
+    "val_AP_medium": 0.052226388215759874,
+    "val_AP_large": 0.060141236836821675,
+    "val_precision": 0.22282895928407703,
+    "val_recall": 0.2406025962051098,
+    "AP_crack_longitudinal": 0.0,
+    "AP_crack_transverse": 0.006349394750074301,
+    "AP_crack_alligator": 0.0502065112794586,
+    "AP_pothole": 0.0018784894439101145,
+    "AP_crack_structural": 0.01324727538064251,
+    "AP_litter": 0.1867004645749552,
+    "AP_manhole_damaged": 0.19206968947771205,
+    "AP_manhole_missing": 0.0019801980198019802,
+    "per_source_mAP50": {
+      "RDD2022": 0.04137412679299814,
+      "TACO": 0.17380968517051382,
+      "TrashTrail": 0.4288531277407689,
+      "Crackseg9k": 0.03467871619162519,
+      "BridgeDeckCsust": 0.06158794212953777,
+      "RoboflowManhole": 0.1710505877337793,
+      "RoboflowManholeG8rvh": 0.23504692502217248,
+      "RoboflowManholeJinggai": 0.1948079638114669
+    },
+    "val_loss": null,
+    "num_detections": 33189
+  },
+  "checkpoint": "runs/yolov11_576/best.pt",
+  "best_epoch": 19,
+  "config": {
+    "model": "yolov11",
+    "variant": "yolo11s",
+    "resolution": 576,
+    "batch": 8,
+    "accum": 2,
+    "effective_batch": 16,
+    "gpu_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "tier": "sm"
+  }
+}

@@ -88,13 +88,14 @@ def build_loaders(cfg):
     kw = dict(num_workers=cfg["num_workers"], pin_memory=cfg["pin_memory"],
               collate_fn=collate_fn,
               persistent_workers=cfg["persistent_workers"] and cfg["num_workers"] > 0)
-    # Validation gets fewer, non-persistent workers. With 8 persistent train
-    # workers, giving val the same spawned 8 more resident processes (each
-    # with its own torch import) at the first validation and exhausted the
-    # 15 GB of system RAM on the laptop. Val only feeds ~4.7k images once an
-    # epoch; 4 workers keep it to ~1 min and are released afterwards.
-    val_kw = dict(kw, num_workers=min(4, cfg["num_workers"]),
-                  persistent_workers=False)
+    # Validation gets 2 persistent workers. Giving it the train loader's 8
+    # exhausted RAM at the first validation; making them non-persistent
+    # instead re-spawned them every epoch, and each spawn re-imports torch
+    # (mapping ~1 GB of CUDA DLLs) - a commit-charge spike that eventually
+    # hit WinError 1455 mid-run. Two workers spawned once cost ~2 GB resident
+    # and nothing per epoch; val is ~4.7k images, still ~1-2 min.
+    val_kw = dict(kw, num_workers=min(2, cfg["num_workers"]),
+                  persistent_workers=cfg["num_workers"] > 0)
     return (torch.utils.data.DataLoader(tr, batch_size=cfg["batch"], shuffle=True,
                                         drop_last=True, **kw),
             torch.utils.data.DataLoader(va, batch_size=max(1, cfg["batch"]),
