@@ -1,0 +1,14 @@
+# Secrets — real Atlas URI and JWT signing key live here. Never commit.
+.env
+.env.local
+
+# Dependencies — restore with `npm install`
+node_modules/
+
+# Runtime data: citizen-uploaded photos and their converted JPEGs
+uploads/*
+!uploads/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
