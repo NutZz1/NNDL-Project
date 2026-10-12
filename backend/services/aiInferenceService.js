@@ -1,6 +1,8 @@
 /**
  * CivicScan AI Inference Service
- * Connects directly to the PyTorch RF-DETR model microservice on port 5001.
+ * Connects to the PyTorch inference microservice on port 5001, which serves every trained
+ * detector: RF-DETR (production), YOLOv11 and RT-DETR (comparison). Each model is used with
+ * its own calibrated thresholds unless the caller overrides them.
  * 8 Locked Detection Classes:
  * 1: crack_longitudinal
  * 2: crack_transverse
@@ -16,12 +18,18 @@ const path = require('path');
 const { execFile } = require('child_process');
 
 const INFERENCE_URL = process.env.INFERENCE_SERVICE_URL || 'http://127.0.0.1:5001/predict';
+const INFERENCE_BASE = INFERENCE_URL.replace(/\/predict\/?$/, '');
 
-// Detection thresholds: 0.40 for every class, 0.50 for litter (it over-triggers on grey
-// textured surfaces). Boxes between CANDIDATE_FLOOR and the threshold come back as
-// `candidates`: the verification agent keeps one only if it clearly sees a real defect.
+const MODEL_KEYS = ['rfdetr', 'yolov11', 'rtdetr'];
+const DEFAULT_MODEL = 'rfdetr';
+const MODEL_NAMES = { rfdetr: 'RF-DETR-Small', yolov11: 'YOLOv11-s', rtdetr: 'RT-DETR (ResNet-50)' };
+
+// RF-DETR thresholds can be tuned from the environment: 0.40 for every class, 0.50 for litter
+// (it over-triggers on grey textured surfaces). Boxes between CANDIDATE_FLOOR and the threshold
+// come back as `candidates`: the verification agent keeps one only if it clearly sees a defect.
 // Override with INFERENCE_SCORE_THRESH=0.4  INFERENCE_CLASS_THRESH={"litter":0.5}
 //               INFERENCE_CANDIDATE_FLOOR=0.15
+// The comparison models always use the defaults calibrated for them in inference_server.py.
 const SCORE_THRESH = (() => {
   const v = Number(process.env.INFERENCE_SCORE_THRESH);
   return Number.isFinite(v) && v > 0 ? v : 0.4;
@@ -49,144 +57,162 @@ const CLASS_METADATA = {
   manhole_missing: { domain: 'hazard', defaultSeverity: 'Critical', label: 'Missing Manhole Cover' },
 };
 
+const normalizeModel = (model) => (MODEL_KEYS.includes(model) ? model : DEFAULT_MODEL);
+
+/** Shape one model's raw microservice output for the rest of the backend and the UI */
+function shapeResult(data, model, t0, viaCli = false) {
+  const base = {
+    model: (data.model || MODEL_NAMES[model]) + (viaCli ? ' (CLI)' : ''),
+    modelKey: data.model_key || model,
+    device: data.device || 'cpu',
+    inferenceMs: data.inference_ms || Date.now() - t0,
+    resolution: data.resolution || null,
+    imageSize: data.image_size || null,
+    thresholds: data.thresholds || null,
+    candidates: data.candidates || [],
+    convertedFilename: data.converted_filename || null,
+    exif: data.exif || null,
+    isRealModel: true,
+  };
+  if (data.has_defect === false || (data.detections_count === 0 && data.category === 'clean')) {
+    return {
+      ...base,
+      hasDefect: false,
+      category: 'clean',
+      domain: 'none',
+      severity: 'None',
+      label: 'Clean Infrastructure (No Defects)',
+      confidence: 0,
+      bboxes: [],
+      detectionsCount: 0,
+    };
+  }
+  const meta = CLASS_METADATA[data.category];
+  if (!meta) throw new Error(`Unknown category from model: ${data.category}`);
+  return {
+    ...base,
+    hasDefect: true,
+    category: data.category,
+    domain: meta.domain,
+    severity: meta.defaultSeverity,
+    label: meta.label,
+    confidence: data.confidence,
+    bboxes: data.bboxes || [],
+    detectionsCount: data.detections_count || 0,
+  };
+}
+
+/** Thrown when no detector could analyse the photo, so callers never act on an invented result */
+class InferenceUnavailableError extends Error {
+  constructor(message) {
+    super(message);
+    this.code = 'MODEL_UNAVAILABLE';
+    this.status = 503;
+  }
+}
+
+async function postJson(url, payload) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `Inference service returned HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
+  }
+  return data;
+}
+
 class AiInferenceService {
+  static get MODEL_KEYS() {
+    return MODEL_KEYS;
+  }
+
+  static get DEFAULT_MODEL() {
+    return DEFAULT_MODEL;
+  }
+
   /**
-   * Calls the RF-DETR PyTorch microservice to perform inference on an uploaded image
+   * Runs one detector on an uploaded image.
    * @param {string} imagePath Full absolute path to image on disk
-   * @param {number} scoreThresh Minimum detection confidence threshold
+   * @param {object} [opts]
+   * @param {string} [opts.model] 'rfdetr' (default) | 'yolov11' | 'rtdetr'
+   * @throws {InferenceUnavailableError} when neither the microservice nor the CLI can run the model
    */
-  static async runInference(imagePath, scoreThresh = SCORE_THRESH, classThresh = CLASS_THRESH) {
+  static async runInference(imagePath, { model = DEFAULT_MODEL } = {}) {
+    model = normalizeModel(model);
     const t0 = Date.now();
+    const thresholds = model === 'rfdetr' ? { score_thresh: SCORE_THRESH, class_thresh: CLASS_THRESH, candidate_floor: CANDIDATE_FLOOR } : {};
     try {
-      // 1. Try fast HTTP call to daemon microservice on port 5001
-      const res = await fetch(INFERENCE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_path: imagePath, score_thresh: scoreThresh, class_thresh: classThresh, candidate_floor: CANDIDATE_FLOOR }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.has_defect === false || (data.detections_count === 0 && data.category === 'clean')) {
-          return {
-            hasDefect: false,
-            category: 'clean',
-            domain: 'none',
-            severity: 'None',
-            label: 'Clean Infrastructure (No Defects)',
-            confidence: 0,
-            bboxes: [],
-            candidates: data.candidates || [],
-            convertedFilename: data.converted_filename || null,
-            detectionsCount: 0,
-            model: data.model || 'RF-DETR-Small',
-            device: data.device || 'cuda:0',
-            inferenceMs: data.inference_ms || (Date.now() - t0),
-            isRealModel: true,
-            exif: data.exif || null,
-          };
-        }
-
-        const category = data.category || 'litter';
-        const meta = CLASS_METADATA[category] || CLASS_METADATA.litter;
-
-        return {
-          hasDefect: true,
-          category,
-          domain: meta.domain,
-          severity: meta.defaultSeverity,
-          label: meta.label,
-          confidence: data.confidence,
-          bboxes: data.bboxes || [],
-          candidates: data.candidates || [],
-          detectionsCount: data.detections_count || 0,
-          model: data.model || 'RF-DETR-Small',
-          device: data.device || 'cuda:0',
-          inferenceMs: data.inference_ms || (Date.now() - t0),
-          isRealModel: true,
-          convertedFilename: data.converted_filename || null,
-          exif: data.exif || null,
-        };
-      }
+      // 1. Fast HTTP call to the inference microservice on port 5001
+      const data = await postJson(INFERENCE_URL, { image_path: imagePath, model, ...thresholds });
+      return shapeResult(data, model, t0);
     } catch (httpErr) {
-      console.warn(`[AI Inference Service] HTTP to RF-DETR daemon failed (${httpErr.message}). Attempting CLI fallback...`);
+      // The service answered but this model has no checkpoint: no point trying the CLI
+      if (httpErr.code === 'MODEL_UNAVAILABLE') throw new InferenceUnavailableError(httpErr.message);
+      console.warn(`[AI Inference Service] HTTP to inference service failed (${httpErr.message}). Attempting CLI fallback...`);
     }
 
-    // 2. Fallback: Run Python inference via CLI execution
-    return new Promise((resolve) => {
-      const pythonExe = path.join(__dirname, '..', '..', 'civicscan-model', '.venv', 'Scripts', 'python.exe');
-      const scriptPath = path.join(__dirname, '..', 'inference_server.py');
+    // 2. Fallback: run the Python inference once via the CLI
+    const args = ['--image', imagePath, '--model', model];
+    if (model === 'rfdetr') {
+      args.push('--thresh', String(SCORE_THRESH), '--candidate-floor', String(CANDIDATE_FLOOR));
+      Object.entries(CLASS_THRESH).forEach(([k, v]) => args.push('--class-thresh', `${k}=${v}`));
+    }
+    const data = await AiInferenceService.runCli(args);
+    return shapeResult(data, model, t0, true);
+  }
 
-      const classArgs = Object.entries(classThresh || {}).flatMap(([k, v]) => ['--class-thresh', `${k}=${v}`]);
-      execFile(pythonExe, [scriptPath, '--image', imagePath, '--thresh', String(scoreThresh), '--candidate-floor', String(CANDIDATE_FLOOR), ...classArgs], (err, stdout) => {
+  /** Runs every available detector on the same image (for the model comparison page) */
+  static async compareModels(imagePath) {
+    const t0 = Date.now();
+    let data;
+    try {
+      data = await postJson(`${INFERENCE_BASE}/compare`, { image_path: imagePath });
+    } catch (httpErr) {
+      console.warn(`[AI Inference Service] /compare failed (${httpErr.message}). Attempting CLI fallback...`);
+      data = await AiInferenceService.runCli(['--image', imagePath, '--compare']);
+    }
+    const results = {};
+    for (const key of MODEL_KEYS) {
+      const r = (data.results || {})[key];
+      if (!r || r.available === false || r.success === false) {
+        results[key] = { modelKey: key, model: MODEL_NAMES[key], available: false, error: (r && r.error) || 'Model not available' };
+      } else {
+        results[key] = { available: true, ...shapeResult(r, key, t0) };
+      }
+    }
+    return { imageSize: data.image_size || null, results };
+  }
+
+  /** Model catalogue with availability and saved test metrics */
+  static async listModels() {
+    const res = await fetch(`${INFERENCE_BASE}/models`);
+    if (!res.ok) throw new InferenceUnavailableError(`Inference service returned HTTP ${res.status}`);
+    return res.json();
+  }
+
+  static runCli(args) {
+    const pythonExe = process.env.INFERENCE_PYTHON || path.join(__dirname, '..', '..', 'civicscan-model', '.venv', 'Scripts', 'python.exe');
+    const scriptPath = path.join(__dirname, '..', 'inference_server.py');
+    return new Promise((resolve, reject) => {
+      execFile(pythonExe, [scriptPath, ...args], { maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
         if (!err && stdout) {
           try {
             const firstBrace = stdout.indexOf('{');
             const lastBrace = stdout.lastIndexOf('}');
-            if (firstBrace === -1 || lastBrace === -1) {
-              throw new Error('No valid JSON found in CLI output');
-            }
-            const data = JSON.parse(stdout.slice(firstBrace, lastBrace + 1));
-            if (data.has_defect === false || (data.detections_count === 0 && data.category === 'clean')) {
-              return resolve({
-                hasDefect: false,
-                category: 'clean',
-                domain: 'none',
-                severity: 'None',
-                label: 'Clean Infrastructure (No Defects)',
-                confidence: 0,
-                bboxes: [],
-                candidates: data.candidates || [],
-                convertedFilename: data.converted_filename || null,
-                detectionsCount: 0,
-                model: 'RF-DETR-Small (CLI)',
-                device: data.device || 'cuda:0',
-                inferenceMs: data.inference_ms || (Date.now() - t0),
-                isRealModel: true,
-                exif: data.exif || null,
-              });
-            }
-
-            const category = data.category || 'litter';
-            const meta = CLASS_METADATA[category] || CLASS_METADATA.litter;
-            return resolve({
-              hasDefect: true,
-              category,
-              domain: meta.domain,
-              severity: meta.defaultSeverity,
-              label: meta.label,
-              confidence: data.confidence,
-              bboxes: data.bboxes || [],
-              candidates: data.candidates || [],
-              detectionsCount: data.detections_count || 0,
-              model: 'RF-DETR-Small (CLI)',
-              device: data.device || 'cuda:0',
-              inferenceMs: data.inference_ms || (Date.now() - t0),
-              isRealModel: true,
-              convertedFilename: data.converted_filename || null,
-              exif: data.exif || null,
-            });
+            if (firstBrace === -1 || lastBrace === -1) throw new Error('No valid JSON found in CLI output');
+            return resolve(JSON.parse(stdout.slice(firstBrace, lastBrace + 1)));
           } catch (parseErr) {
             console.error('[AI Inference Service] Failed to parse CLI output:', parseErr.message);
           }
         }
-
-        // Final graceful fallback if both HTTP and CLI fail
-        console.warn('[AI Inference Service] Fallback heuristic applied.');
-        resolve({
-          hasDefect: true,
-          category: 'litter',
-          domain: 'civic_waste',
-          severity: 'Medium',
-          label: 'Street Litter & Plastic',
-          confidence: 0.88,
-          bboxes: [{ label: 'litter', score: 0.88, box: [0.3, 0.2, 0.7, 0.8] }],
-          detectionsCount: 1,
-          model: 'CivicScan-Heuristic-Fallback',
-          device: 'cpu',
-          inferenceMs: Date.now() - t0,
-          isRealModel: false,
-        });
+        // No invented detections: the caller tells the user the model is offline
+        reject(
+          new InferenceUnavailableError(
+            'The detection model is not running, so this photo could not be analysed. Start it with: python backend/inference_server.py'
+          )
+        );
       });
     });
   }
@@ -208,3 +234,4 @@ class AiInferenceService {
 
 module.exports = AiInferenceService;
 module.exports.CLASS_METADATA = CLASS_METADATA;
+module.exports.InferenceUnavailableError = InferenceUnavailableError;

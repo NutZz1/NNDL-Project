@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, LogIn, LayoutDashboard, Menu, X, Leaf, UploadCloud, Search } from 'lucide-react';
+import { ShieldCheck, LogIn, LayoutDashboard, Menu, X, Leaf, UploadCloud, Search, BarChart3 } from 'lucide-react';
 
 export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedIn }) {
   const [scrolled, setScrolled] = useState(false);
@@ -127,7 +127,7 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
           style={{
             display: 'none',
             alignItems: 'center',
-            gap: '24px',
+            gap: '20px',
           }}
           className="desktop-nav"
         >
@@ -198,6 +198,26 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
             onMouseOut={(e) => (e.target.style.color = '#334155')}
           >
             UN SDGs
+          </button>
+          {/* Side-by-side comparison of every trained detector */}
+          <button
+            onClick={() => onNavigate('compare')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              fontSize: '0.9rem',
+              fontWeight: 700,
+              color: '#3730a3',
+              padding: '6px 2px',
+              borderBottom: currentPage === 'compare' ? '2px solid #3730a3' : '2px solid transparent',
+              background: 'none',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <BarChart3 size={15} />
+            Compare
           </button>
         </nav>
 
@@ -374,6 +394,28 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
           >
             <Search size={18} />
             <span>Track Report</span>
+          </button>
+          <button
+            onClick={() => {
+              setMobileMenuOpen(false);
+              onNavigate('compare');
+            }}
+            style={{
+              textAlign: 'left',
+              padding: '8px 0',
+              fontSize: '1rem',
+              fontWeight: 700,
+              color: '#3730a3',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <BarChart3 size={18} />
+            <span>Compare Models</span>
           </button>
           <button
             onClick={() => handleNavClick('about')}

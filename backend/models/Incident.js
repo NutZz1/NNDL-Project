@@ -40,6 +40,11 @@ const IncidentSchema = new mongoose.Schema(
       enum: ['Low', 'Medium', 'High', 'Critical'],
       default: 'Medium',
     },
+    // Detector that analysed the photo (RF-DETR in production; YOLOv11 / RT-DETR when compared)
+    detectorModel: {
+      type: String,
+      default: 'RF-DETR-Small',
+    },
     status: {
       type: String,
       // Needs Review -> Assigned -> In Progress -> Resolved, or Rejected (not a real defect).

@@ -1,35 +1,30 @@
-"""CivicScan RF-DETR Inference Microservice
-Loads trained RF-DETR model checkpoint (best.pt) on GPU and provides fast HTTP inference.
+﻿"""CivicScan Inference Microservice (RF-DETR, YOLOv11, RT-DETR)
+Loads every trained detector checkpoint it can find and serves them over HTTP.
+RF-DETR is the production model; YOLOv11 and RT-DETR are served for side-by-side comparison.
+A model whose best.pt is missing is simply reported as unavailable (e.g. RT-DETR until its
+checkpoint is copied into civicscan_training_rfdetr/training/runs/rtdetr/).
 
 Endpoints:
   GET  /health   - Healthcheck & model info
-  POST /predict  - Accepts JSON {"image_path": "..."} or raw binary image
+  GET  /models   - Every model: availability, checkpoint, test metrics from its run folder
+  POST /predict  - JSON {"image_path": "...", "model": "rfdetr"|"yolov11"|"rtdetr"} or raw binary image
                    Returns predicted defect class, confidence, bounding boxes, and latency.
+  POST /compare  - JSON {"image_path": "..."}: runs every available model on the same image
 
 Can also be invoked via CLI:
-  python inference_server.py --image <path_to_image>
+  python inference_server.py --image <path_to_image> [--model yolov11]
   python inference_server.py --test
 """
 
 import sys
 import os
 import io
+import glob
 import json
 import time
 import argparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from PIL import Image, ImageOps
-
-# Deployment thresholds. These match scripts/predict.py, which was calibrated on field photos:
-# sigmoid-focal DETR scores are low (a good detection is typically 0.3-0.7), so 0.3 is the
-# default cut, and `litter` gets a stricter 0.5 because it fires on any grey textured surface
-# (concrete, gravel inside potholes) and would otherwise steal the box from the hazard classes.
-DEFAULT_SCORE_THRESH = 0.4
-DEFAULT_CLASS_THRESH = {"litter": 0.5}
-# Boxes between this floor and the threshold are returned separately as `candidates`: the
-# detector was unsure about them, so the verification agent decides whether any is a real defect.
-DEFAULT_CANDIDATE_FLOOR = 0.15
-
 
 def open_upright(path_or_file):
     """Open a photo the way a phone shows it. Phones store portrait photos sideways plus an
@@ -57,60 +52,182 @@ from civicscan.models import build_model_and_criterion, postprocess
 from civicscan.data.transforms import build_transforms
 from civicscan.schema import CATEGORIES
 
-# Checkpoint priority: rfdetr_run4_700px (the final model: 700 px, test mAP50 47.2%)
-# -> rfdetr_run2 -> runs/rfdetr. CIVICSCAN_CKPT in the environment overrides all of them.
-RUN4_CKPT = os.path.join(TRAINING_DIR, "runs", "rfdetr_run4_700px", "best.pt")
-RUN2_CKPT = os.path.join(TRAINING_DIR, "runs", "rfdetr_run2", "best.pt")
-RUN1_CKPT = os.path.join(TRAINING_DIR, "runs", "rfdetr", "best.pt")
-DEFAULT_CKPT = next((c for c in (RUN4_CKPT, RUN2_CKPT, RUN1_CKPT) if os.path.exists(c)), RUN1_CKPT)
+RUNS_DIR = os.path.join(TRAINING_DIR, "runs")
 
-GLOBAL_MODEL = None
-GLOBAL_CFG = None
-GLOBAL_DEVICE = None
-GLOBAL_CKPT_INFO = {}
+# One entry per detector. `runs` lists run folders (globs allowed) in priority order; the first
+# one holding a best.pt is served. CIVICSCAN_CKPT_<KEY> (or CIVICSCAN_CKPT for RF-DETR) in the
+# environment overrides the search with an explicit checkpoint path.
+# Thresholds: DETR sigmoid-focal scores are low (a good detection is typically 0.3-0.7), so 0.4
+# is the cut; `litter` gets 0.5 because it fires on any grey textured surface. YOLO scores are
+# calibrated differently (Ultralytics default 0.25). Boxes between `floor` and the threshold are
+# returned as uncertain `candidates` for the verification agent. YOLOv11-s from scratch is far less
+# confident (its best boxes on field photos score ~0.2-0.3), so it uses 0.2.
+MODEL_SPECS = {
+    "rfdetr": {
+        "name": "RF-DETR-Small",
+        "architecture": "Transformer detector, DINOv2 ViT-S/14 backbone, 300 queries, no NMS",
+        "role": "production",
+        "runs": ["rfdetr_run4_700px", "rfdetr_run2", "rfdetr"],
+        "env": "CIVICSCAN_CKPT",
+        "thresh": 0.4, "class_thresh": {"litter": 0.5}, "floor": 0.15,
+    },
+    "yolov11": {
+        "name": "YOLOv11-s",
+        "architecture": "One-stage CNN detector, CSP backbone + PAN-FPN, anchor-free, NMS",
+        "role": "comparison",
+        "runs": ["yolov11_576", "yolov11*"],
+        "env": "CIVICSCAN_CKPT_YOLOV11",
+        "thresh": 0.2, "class_thresh": {}, "floor": 0.1,
+    },
+    "rtdetr": {
+        "name": "RT-DETR (ResNet-50)",
+        "architecture": "Transformer detector, ResNet-50 backbone + hybrid encoder, 300 queries, no NMS",
+        "role": "comparison",
+        "runs": ["rtdetr*"],
+        "env": "CIVICSCAN_CKPT_RTDETR",
+        "thresh": 0.4, "class_thresh": {"litter": 0.5}, "floor": 0.15,
+    },
+}
+DEFAULT_MODEL = "rfdetr"
+CLASS_NAMES = [c["name"] for c in CATEGORIES]
+
+# Back-compat thresholds for callers that do not name a model (RF-DETR's)
+DEFAULT_SCORE_THRESH = MODEL_SPECS["rfdetr"]["thresh"]
+DEFAULT_CLASS_THRESH = MODEL_SPECS["rfdetr"]["class_thresh"]
+DEFAULT_CANDIDATE_FLOOR = MODEL_SPECS["rfdetr"]["floor"]
+
+LOADED = {}  # key -> {"model", "cfg", "device", "info"}
+GLOBAL_DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 
-def load_rfdetr_model(ckpt_path=None):
-    global GLOBAL_MODEL, GLOBAL_CFG, GLOBAL_DEVICE, GLOBAL_CKPT_INFO
-    if GLOBAL_MODEL is not None:
-        return GLOBAL_MODEL, GLOBAL_CFG, GLOBAL_DEVICE
+def find_checkpoint(key):
+    spec = MODEL_SPECS[key]
+    override = os.environ.get(spec["env"])
+    if override:
+        return override if os.path.exists(override) else None
+    for pattern in spec["runs"]:
+        for run_dir in sorted(glob.glob(os.path.join(RUNS_DIR, pattern))):
+            ckpt = os.path.join(run_dir, "best.pt")
+            if os.path.exists(ckpt):
+                return ckpt
+    return None
 
-    if not ckpt_path:
-        ckpt_path = os.environ.get("CIVICSCAN_CKPT", DEFAULT_CKPT)
+
+def read_test_metrics(run_dir, ck_metrics):
+    """Test-set metrics saved next to the checkpoint. All files use the same masked COCO
+    evaluation (civicscan.engine.evaluate), so the numbers are comparable across models.
+    Falls back to the validation metrics stored inside the checkpoint, labelled as such."""
+    te = os.path.join(run_dir, "test_eval.json")
+    if os.path.exists(te):
+        with open(te) as f:
+            m = json.load(f).get("masked", {})
+        return {
+            "split": "test", "source": "test_eval.json",
+            "mAP50": m.get("val_mAP50"), "mAP5095": m.get("val_mAP5095"),
+            "precision": m.get("val_precision"), "recall": m.get("val_recall"),
+            "AP_small": m.get("val_AP_small"), "AP_medium": m.get("val_AP_medium"), "AP_large": m.get("val_AP_large"),
+            "per_class_AP5095": {n: m.get(f"AP_{n}") for n in CLASS_NAMES},
+        }
+    ta = os.path.join(run_dir, "test_ap50.json")
+    if os.path.exists(ta):
+        with open(ta) as f:
+            d = json.load(f)
+        pc = d.get("per_class", {})
+        return {
+            "split": "test", "source": "test_ap50.json",
+            "mAP50": d.get("overall", {}).get("mAP50"), "mAP5095": d.get("overall", {}).get("mAP5095"),
+            "per_class_AP5095": {n: pc.get(n, {}).get("AP5095") for n in CLASS_NAMES},
+        }
+    m = ck_metrics or {}
+    return {
+        "split": "validation", "source": "checkpoint",
+        "mAP50": m.get("val_mAP50"), "mAP5095": m.get("val_mAP5095"),
+        "precision": m.get("val_precision"), "recall": m.get("val_recall"),
+        "per_class_AP5095": {n: m.get(f"AP_{n}") for n in CLASS_NAMES},
+    }
+
+
+def load_model(key=DEFAULT_MODEL, ckpt_path=None):
+    if key not in MODEL_SPECS:
+        raise ValueError(f"Unknown model '{key}'. Choose one of: {', '.join(MODEL_SPECS)}")
+    if key in LOADED:
+        entry = LOADED[key]
+        return entry["model"], entry["cfg"], entry["device"]
+
+    spec = MODEL_SPECS[key]
+    ckpt_path = ckpt_path or find_checkpoint(key)
+    if not ckpt_path or not os.path.exists(ckpt_path):
+        raise FileNotFoundError(
+            f"{spec['name']} checkpoint not found. Put its best.pt in "
+            f"{os.path.join(RUNS_DIR, spec['runs'][0].rstrip('*') or key)} or set {spec['env']}.")
 
     t0 = time.time()
-    print(f"[RF-DETR] Loading checkpoint from: {ckpt_path}")
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found at: {ckpt_path}")
-
-    ck = torch.load(ckpt_path, map_location="cpu")
-    cfg = ck.get("config", {})
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    cfg["device"] = device
+    print(f"[{spec['name']}] Loading checkpoint from: {ckpt_path}")
+    ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    cfg = dict(ck.get("config", {}))
+    cfg.setdefault("model", key)
+    if cfg["model"] != key:
+        raise ValueError(f"{ckpt_path} holds a '{cfg['model']}' model, not '{key}'")
+    cfg["device"] = GLOBAL_DEVICE
     cfg["pretrained"] = False
-
-    epoch = ck.get("epoch", "unknown")
-    metrics = ck.get("metrics", {})
-    val_map50 = round(metrics.get("val_mAP50", 0.4354) * 100, 2)
-
-    GLOBAL_CKPT_INFO = {
-        "checkpoint_path": ckpt_path,
-        "epoch": epoch,
-        "val_mAP50": f"{val_map50}%",
-        "benchmark_test_mAP50": "46.00% (0.45998 mAP50)",
-        "test_recall": "79.56%",
-    }
 
     model, _ = build_model_and_criterion(cfg)
     model.load_state_dict(ck["model"])
-    model.to(device).eval()
+    model.to(GLOBAL_DEVICE).eval()
 
-    GLOBAL_MODEL = model
-    GLOBAL_CFG = cfg
-    GLOBAL_DEVICE = device
+    LOADED[key] = {
+        "model": model, "cfg": cfg, "device": GLOBAL_DEVICE, "ck_metrics": ck.get("metrics"),
+        "info": {
+            "checkpoint_path": ckpt_path,
+            "epoch": ck.get("epoch"),
+            "resolution": cfg.get("resolution"),
+            "variant": cfg.get("variant"),
+            "params_m": round(sum(p.numel() for p in model.parameters()) / 1e6, 2),
+            "metrics": read_test_metrics(os.path.dirname(ckpt_path), ck.get("metrics")),
+        },
+    }
+    print(f"[{spec['name']}] Loaded on {GLOBAL_DEVICE} (epoch {ck.get('epoch')}, "
+          f"{cfg.get('resolution')} px) in {round(time.time() - t0, 2)}s")
+    return model, cfg, GLOBAL_DEVICE
 
-    print(f"[RF-DETR] Model loaded on {device} (Epoch {epoch}, Test Benchmark mAP50: ~46-47%) in {round(time.time() - t0, 2)}s")
-    return model, cfg, device
+
+def load_rfdetr_model(ckpt_path=None):
+    """Kept for existing callers: loads the production RF-DETR model."""
+    return load_model("rfdetr", ckpt_path)
+
+
+def load_all_models():
+    for key in MODEL_SPECS:
+        try:
+            load_model(key)
+        except FileNotFoundError as e:
+            print(f"[{MODEL_SPECS[key]['name']}] not available: {e}")
+
+
+def model_catalog():
+    """Every model with its availability and saved test metrics, for the comparison UI."""
+    out = []
+    for key, spec in MODEL_SPECS.items():
+        entry = LOADED.get(key)
+        if entry is None and find_checkpoint(key):
+            try:
+                load_model(key)
+                entry = LOADED[key]
+            except Exception as e:
+                print(f"[{spec['name']}] failed to load: {e}")
+        info = dict(entry["info"]) if entry else {"checkpoint_path": None}
+        if entry:  # re-read so a test_eval.json written after start-up is picked up
+            info["metrics"] = read_test_metrics(os.path.dirname(info["checkpoint_path"]), entry["ck_metrics"])
+        out.append({
+            "key": key,
+            "name": spec["name"],
+            "architecture": spec["architecture"],
+            "role": spec["role"],
+            "available": entry is not None,
+            "thresholds": {"default": spec["thresh"], "candidate_floor": spec["floor"], **spec["class_thresh"]},
+            **info,
+        })
+    return out
 
 
 def extract_gps_from_pil(img):
@@ -155,8 +272,15 @@ def extract_gps_from_pil(img):
     return None
 
 
-def run_inference_on_pil(img, score_thresh=DEFAULT_SCORE_THRESH, class_thresh=None, exif_img=None, candidate_floor=DEFAULT_CANDIDATE_FLOOR):
-    model, cfg, device = load_rfdetr_model()
+def run_inference_on_pil(img, score_thresh=None, class_thresh=None, exif_img=None, candidate_floor=None, model_key=DEFAULT_MODEL):
+    """Thresholds left as None use the chosen model's own defaults (see MODEL_SPECS)."""
+    spec = MODEL_SPECS.get(model_key)
+    if spec is None:
+        raise ValueError(f"Unknown model '{model_key}'. Choose one of: {', '.join(MODEL_SPECS)}")
+    score_thresh = spec["thresh"] if score_thresh is None else score_thresh
+    candidate_floor = spec["floor"] if candidate_floor is None else candidate_floor
+    class_thresh = {**spec["class_thresh"], **(class_thresh or {})}
+    model, cfg, device = load_model(model_key)
     t0 = time.time()
 
     orig_w, orig_h = img.size
@@ -177,12 +301,13 @@ def run_inference_on_pil(img, score_thresh=DEFAULT_SCORE_THRESH, class_thresh=No
 
     valid_mask = torch.ones((1, 8), dtype=torch.bool, device=device)
     res = postprocess(
-        "rfdetr",
+        model_key,
         outputs,
         [target],
         valid_mask,
         res_size,
-        score_thresh=min([score_thresh, candidate_floor] + list((class_thresh or {}).values())),
+        score_thresh=min([score_thresh, candidate_floor] + list(class_thresh.values())),
+        nms_iou=cfg.get("nms_iou", 0.7),
         apply_mask=False,
     )
 
@@ -191,8 +316,6 @@ def run_inference_on_pil(img, score_thresh=DEFAULT_SCORE_THRESH, class_thresh=No
     scores = res[0]["scores"].tolist()
     labels = res[0]["labels"].tolist()
     boxes = res[0]["boxes"].tolist()
-
-    class_thresh = {**DEFAULT_CLASS_THRESH, **(class_thresh or {})}
 
     # A DETR query predicts ONE box with a score for every class, and postprocess returns the
     # top (query, class) pairs, so the same box comes back once per class (e.g. one pothole
@@ -317,11 +440,43 @@ def run_inference_on_pil(img, score_thresh=DEFAULT_SCORE_THRESH, class_thresh=No
         "candidates": candidates,
         "inference_ms": inference_ms,
         "device": device,
-        "model": "RF-DETR-Small",
+        "model": spec["name"],
+        "model_key": model_key,
+        "resolution": res_size,
         "image_size": [orig_w, orig_h],
         "thresholds": {"default": score_thresh, "candidate_floor": candidate_floor, **class_thresh},
         "exif": exif_data,
     }
+
+
+def compare_on_pil(img, exif_img=None):
+    """Run every available model on the same image, each with its own default thresholds."""
+    results = {}
+    for key, spec in MODEL_SPECS.items():
+        if key not in LOADED and not find_checkpoint(key):
+            results[key] = {"success": False, "available": False, "model": spec["name"], "model_key": key,
+                            "error": f"{spec['name']} checkpoint not found"}
+            continue
+        try:
+            results[key] = {"available": True, **run_inference_on_pil(img, exif_img=exif_img, model_key=key)}
+        except Exception as e:
+            results[key] = {"success": False, "available": False, "model": spec["name"], "model_key": key, "error": str(e)}
+    return {"success": True, "image_size": list(img.size), "results": results}
+
+
+def _optional_float(v):
+    return None if v is None else float(v)
+
+
+def _open_from_path(image_path):
+    """Open a stored upload. HEIC photos are also saved as JPEG so the browser can show them."""
+    img, raw = open_upright(image_path)
+    converted_filename = None
+    if image_path.lower().endswith((".heic", ".heif")):
+        jpg_path = os.path.splitext(image_path)[0] + ".jpg"
+        img.save(jpg_path, format="JPEG", quality=92)
+        converted_filename = os.path.basename(jpg_path)
+    return img, raw, converted_filename
 
 
 class InferenceHTTPHandler(BaseHTTPRequestHandler):
@@ -345,53 +500,59 @@ class InferenceHTTPHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(200, {
                 "status": "online",
-                "service": "CivicScan RF-DETR Inference Server",
-                "model": "RF-DETR-Small",
+                "service": "CivicScan Inference Server",
+                "default_model": DEFAULT_MODEL,
+                "loaded_models": [MODEL_SPECS[k]["name"] for k in LOADED],
                 "device": str(GLOBAL_DEVICE),
-                "checkpoint": GLOBAL_CKPT_INFO,
+                "checkpoints": {k: v["info"]["checkpoint_path"] for k, v in LOADED.items()},
                 "timestamp": time.time(),
             })
+        elif self.path == "/models":
+            self._send_json(200, {"success": True, "default": DEFAULT_MODEL, "models": model_catalog()})
         else:
             self._send_json(404, {"error": "Not found"})
+
+    def _read_body(self):
+        content_len = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(content_len), self.headers.get("Content-Type", "")
 
     def do_POST(self):
-        if self.path == "/predict":
-            try:
-                content_len = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_len)
+        if self.path not in ("/predict", "/compare"):
+            return self._send_json(404, {"error": "Not found"})
+        try:
+            body, content_type = self._read_body()
+            data, converted_filename = {}, None
+            if "application/json" in content_type:
+                data = json.loads(body.decode("utf-8") or "{}")
+                image_path = data.get("image_path")
+                if not image_path or not os.path.exists(image_path):
+                    return self._send_json(400, {"error": f"Invalid or non-existent image_path: {image_path}"})
+                img, raw, converted_filename = _open_from_path(image_path)
+            else:
+                # Raw image binary upload
+                img, raw = open_upright(io.BytesIO(body))
 
-                content_type = self.headers.get("Content-Type", "")
-
-                if "application/json" in content_type:
-                    data = json.loads(body.decode("utf-8"))
-                    image_path = data.get("image_path")
-                    thresh = float(data.get("score_thresh", DEFAULT_SCORE_THRESH))
-                    class_thresh = data.get("class_thresh") or None
-                    candidate_floor = float(data.get("candidate_floor", DEFAULT_CANDIDATE_FLOOR))
-                    if not image_path or not os.path.exists(image_path):
-                        return self._send_json(400, {"error": f"Invalid or non-existent image_path: {image_path}"})
-                    img, raw = open_upright(image_path)
-                    converted_filename = None
-                    if image_path.lower().endswith((".heic", ".heif")):
-                        jpg_path = os.path.splitext(image_path)[0] + ".jpg"
-                        img.save(jpg_path, format="JPEG", quality=92)
-                        converted_filename = os.path.basename(jpg_path)
-                else:
-                    # Raw image binary upload
-                    img, raw = open_upright(io.BytesIO(body))
-                    thresh = DEFAULT_SCORE_THRESH
-                    class_thresh = None
-                    candidate_floor = DEFAULT_CANDIDATE_FLOOR
-                    converted_filename = None
-
-                result = run_inference_on_pil(img, score_thresh=thresh, class_thresh=class_thresh, exif_img=raw, candidate_floor=candidate_floor)
-                if converted_filename:
-                    result["converted_filename"] = converted_filename
-                self._send_json(200, result)
-            except Exception as e:
-                self._send_json(500, {"error": str(e)})
-        else:
-            self._send_json(404, {"error": "Not found"})
+            if self.path == "/compare":
+                result = compare_on_pil(img, exif_img=raw)
+            else:
+                model_key = data.get("model") or DEFAULT_MODEL
+                if model_key not in MODEL_SPECS:
+                    return self._send_json(400, {"error": f"Unknown model '{model_key}'. Choose one of: {', '.join(MODEL_SPECS)}"})
+                result = run_inference_on_pil(
+                    img,
+                    score_thresh=_optional_float(data.get("score_thresh")),
+                    class_thresh=data.get("class_thresh") or None,
+                    exif_img=raw,
+                    candidate_floor=_optional_float(data.get("candidate_floor")),
+                    model_key=model_key,
+                )
+            if converted_filename:
+                result["converted_filename"] = converted_filename
+            self._send_json(200, result)
+        except FileNotFoundError as e:
+            self._send_json(503, {"error": str(e), "code": "MODEL_UNAVAILABLE"})
+        except Exception as e:
+            self._send_json(500, {"error": str(e)})
 
     def log_message(self, format, *args):
         # Concise logging
@@ -405,12 +566,20 @@ if sys.platform == "win32":
 
 
 def run_server(port=5001, ckpt_path=None):
-    load_rfdetr_model(ckpt_path=ckpt_path)
+    if ckpt_path:
+        load_model(DEFAULT_MODEL, ckpt_path=ckpt_path)
+    load_all_models()
+    if DEFAULT_MODEL not in LOADED:
+        raise SystemExit(f"[CivicScan] The production model ({MODEL_SPECS[DEFAULT_MODEL]['name']}) could not be loaded.")
     server = HTTPServer(("0.0.0.0", port), InferenceHTTPHandler)
     print("==================================================")
-    print(f"[CivicScan] RF-DETR Inference Microservice active on port {port}")
+    print(f"[CivicScan] Inference Microservice active on port {port}")
+    for key, spec in MODEL_SPECS.items():
+        print(f"[CivicScan]   {spec['name']:22s} {'loaded' if key in LOADED else 'NOT AVAILABLE'}")
     print(f"[CivicScan] Health:  http://127.0.0.1:{port}/health")
+    print(f"[CivicScan] Models:  http://127.0.0.1:{port}/models")
     print(f"[CivicScan] Predict: http://127.0.0.1:{port}/predict (POST)")
+    print(f"[CivicScan] Compare: http://127.0.0.1:{port}/compare (POST)")
     print("==================================================")
     try:
         server.serve_forever()
@@ -420,25 +589,28 @@ def run_server(port=5001, ckpt_path=None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="CivicScan RF-DETR Inference Service")
+    parser = argparse.ArgumentParser(description="CivicScan Inference Service (RF-DETR / YOLOv11 / RT-DETR)")
     parser.add_argument("--port", type=int, default=5001, help="Port to listen on")
-    parser.add_argument("--ckpt", type=str, default=None, help="Custom checkpoint path (.pt)")
+    parser.add_argument("--ckpt", type=str, default=None, help="Custom RF-DETR checkpoint path (.pt)")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, choices=list(MODEL_SPECS),
+                        help="Model for --image / --test")
     parser.add_argument("--image", type=str, default=None, help="Run single image inference and print JSON")
+    parser.add_argument("--compare", action="store_true", help="With --image: run every available model")
     parser.add_argument("--test", action="store_true", help="Run test on dummy image and exit")
-    parser.add_argument("--thresh", type=float, default=DEFAULT_SCORE_THRESH, help="Detection score threshold")
-    parser.add_argument("--candidate-floor", type=float, default=DEFAULT_CANDIDATE_FLOOR,
+    parser.add_argument("--thresh", type=float, default=None, help="Detection score threshold (default: the model's own)")
+    parser.add_argument("--candidate-floor", type=float, default=None,
                         help="weakest score returned as an uncertain candidate for the verification agent")
     parser.add_argument("--class-thresh", action="append", default=[], metavar="CLASS=THR",
                         help="per-class threshold, e.g. litter=0.5 (repeatable)")
     args = parser.parse_args()
 
     if args.ckpt:
-        load_rfdetr_model(ckpt_path=args.ckpt)
+        load_model(DEFAULT_MODEL, ckpt_path=args.ckpt)
 
     if args.test:
-        print("[Test Mode] Running RF-DETR inference on sample synthetic image...")
+        print(f"[Test Mode] Running {MODEL_SPECS[args.model]['name']} inference on sample synthetic image...")
         dummy = Image.new("RGB", (640, 480), color=(140, 140, 140))
-        res = run_inference_on_pil(dummy, score_thresh=args.thresh)
+        res = run_inference_on_pil(dummy, score_thresh=args.thresh, model_key=args.model)
         print(json.dumps(res, indent=2))
         sys.exit(0)
 
@@ -446,18 +618,18 @@ if __name__ == "__main__":
         if not os.path.exists(args.image):
             print(f"Error: Image '{args.image}' not found.")
             sys.exit(1)
-        img, raw = open_upright(args.image)
-        converted_filename = None
-        if args.image.lower().endswith((".heic", ".heif")):
-            jpg_path = os.path.splitext(args.image)[0] + ".jpg"
-            img.save(jpg_path, format="JPEG", quality=92)
-            converted_filename = os.path.basename(jpg_path)
-
-        cli_class = {k: float(v) for k, v in (x.split("=") for x in args.class_thresh)} or None
-        res = run_inference_on_pil(img, score_thresh=args.thresh, class_thresh=cli_class, exif_img=raw, candidate_floor=args.candidate_floor)
+        img, raw, converted_filename = _open_from_path(args.image)
+        if args.compare:
+            res = compare_on_pil(img, exif_img=raw)
+        else:
+            cli_class = {k: float(v) for k, v in (x.split("=") for x in args.class_thresh)} or None
+            res = run_inference_on_pil(img, score_thresh=args.thresh, class_thresh=cli_class, exif_img=raw,
+                                       candidate_floor=args.candidate_floor, model_key=args.model)
         if converted_filename:
             res["converted_filename"] = converted_filename
         print(json.dumps(res, indent=2))
         sys.exit(0)
 
     run_server(port=args.port, ckpt_path=args.ckpt)
+
+

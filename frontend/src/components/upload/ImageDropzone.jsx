@@ -4,7 +4,7 @@ import heic2any from 'heic2any';
 import { api } from '../../services/api';
 import { readFileAsDataUrl, resolveImageUrl, getCategoryFallback } from '../../services/imageService';
 
-export default function ImageDropzone({ onImageProcessed, email = '', disabled = false }) {
+export default function ImageDropzone({ onImageProcessed, email = '', disabled = false, model = 'rfdetr' }) {
   const fileInputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -25,7 +25,7 @@ export default function ImageDropzone({ onImageProcessed, email = '', disabled =
           displayableFile = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
         } catch (convErr) {
           // Some HEIC formats or browser extensions with CSP restrict in-browser conversion.
-          // The backend RF-DETR pipeline natively converts HEIC to standard JPEG via pillow_heif.
+          // The backend model service natively converts HEIC to standard JPEG via pillow_heif.
         }
       }
 
@@ -37,12 +37,13 @@ export default function ImageDropzone({ onImageProcessed, email = '', disabled =
         previewUrl = dataUrl || URL.createObjectURL(displayableFile);
       }
 
-      // 2. Call backend for real RF-DETR inference, EXIF extraction, and DB storage
+      // 2. Call backend for real model inference (the selected detector), EXIF extraction, and DB storage
       try {
-        const serverRes = await api.uploadAndAnalyzeImage(file, {}, email);
+        const serverRes = await api.uploadAndAnalyzeImage(file, {}, email, model);
         if (serverRes) {
           const ai = serverRes.aiDetection || {};
           const meta = serverRes.metadata || {};
+          const modelInfo = { modelName: ai.model || '', modelKey: ai.modelKey || model, inferenceMs: ai.inferenceMs, device: ai.device };
 
           // Resolve the server-converted JPEG image URL
           const backendImgUrl = serverRes.imageUrl
@@ -58,9 +59,10 @@ export default function ImageDropzone({ onImageProcessed, email = '', disabled =
               previewUrl: effectivePreview,
               filename: file.name,
               discarded: true,
+              ...modelInfo,
               message:
                 serverRes.message ||
-                'No civic hazards or defects detected by RF-DETR. Image verified clean and discarded.',
+                `No civic hazards or defects detected by ${modelInfo.modelName || 'the model'}. Image verified clean and discarded.`,
               metadata: {
                 hasGps: meta.hasGps,
                 lat: meta.latitude || 10.903824,
@@ -103,9 +105,10 @@ export default function ImageDropzone({ onImageProcessed, email = '', disabled =
               timestamp: meta.timestamp || new Date().toLocaleString(),
               address: meta.address || `Ettimadai, Coimbatore (${resolvedLat.toFixed(4)}° N, ${resolvedLng.toFixed(4)}° E)`,
             },
-            category: ai.category || 'litter',
-            domain: ai.domain || 'civic_waste',
-            confidence: ai.confidence || 0.92,
+            ...modelInfo,
+            category: ai.category,
+            domain: ai.domain,
+            confidence: ai.confidence ?? 0,
             severity: ai.severity || 'Medium',
             bboxes: ai.bboxes || [],
             savedIncident,

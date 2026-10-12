@@ -69,13 +69,28 @@ exports.processImage = async (req, res) => {
       });
     }
 
-    // 1. Execute PyTorch RF-DETR Model Inference (also extracts native EXIF via PIL)
+    // 1. Execute PyTorch model inference (also extracts native EXIF via PIL).
+    // RF-DETR is the production model; YOLOv11 / RT-DETR can be chosen to compare them in the product.
+    const requestedModel = String(req.body.model || AiInferenceService.DEFAULT_MODEL).toLowerCase();
+    if (!AiInferenceService.MODEL_KEYS.includes(requestedModel)) {
+      await removeUpload(file);
+      return res.status(400).json({ success: false, code: 'UNKNOWN_MODEL', error: `Unknown model "${requestedModel}".` });
+    }
     const absoluteImagePath = path.resolve(file.path);
-    let inferenceResult = await AiInferenceService.runInference(absoluteImagePath);
+    let inferenceResult;
+    try {
+      inferenceResult = await AiInferenceService.runInference(absoluteImagePath, { model: requestedModel });
+    } catch (inferErr) {
+      // Never create a report from a guess: tell the citizen the model is offline
+      await removeUpload(file);
+      console.error(`[UploadController] Inference failed (${requestedModel}): ${inferErr.message}`);
+      return res.status(inferErr.status || 503).json({ success: false, code: inferErr.code || 'MODEL_UNAVAILABLE', error: inferErr.message });
+    }
     const detectorResult = inferenceResult; // kept so the report can show what the detector said originally
+    const modelName = detectorResult.model;
 
     console.log(
-      `[UploadController] RF-DETR Detection: "${inferenceResult.category}" (Defect: ${inferenceResult.hasDefect}, Count: ${inferenceResult.detectionsCount}) in ${inferenceResult.inferenceMs}ms on ${inferenceResult.device}`
+      `[UploadController] ${modelName} Detection: "${inferenceResult.category}" (Defect: ${inferenceResult.hasDefect}, Count: ${inferenceResult.detectionsCount}) in ${inferenceResult.inferenceMs}ms on ${inferenceResult.device}`
     );
 
     // 2. Read file buffer for EXIF GPS extraction via Node (supplementary)
@@ -113,7 +128,7 @@ exports.processImage = async (req, res) => {
       console.log(`[UploadController] 📍 No GPS metadata found. Defaulting to Amrita Campus: ${finalLat}° N, ${finalLng}° E`);
     }
 
-    // Verification Agent: after RF-DETR has classified the photo and drawn its boxes, a vision LLM
+    // Verification Agent: after the detector has classified the photo and drawn its boxes, a vision LLM
     // checks every box. Wrong labels are corrected, false boxes removed, correct ones kept.
     let aiReview = null;
     const confidentFound =
@@ -150,7 +165,7 @@ exports.processImage = async (req, res) => {
       inferenceResult.hasDefect && (inferenceResult.bboxes || []).length > 0 && inferenceResult.category !== 'clean';
     const llmSaysClean = Boolean(aiReview && aiReview.performed && aiReview.verdict === 'removed');
 
-    // If image has no civic defects (RF-DETR, or the second AI check), discard it immediately
+    // If image has no civic defects (detector, or the second AI check), discard it immediately
     if (!detectorFoundDefect || llmSaysClean) {
       logScan({
         detectorCategory: detectorResult.category,
@@ -158,7 +173,7 @@ exports.processImage = async (req, res) => {
         reviewVerdict: aiReview ? aiReview.verdict : 'none',
         outcome: llmSaysClean ? 'discarded_by_ai' : 'discarded_clean',
       });
-      console.log(`[UploadController] 🗑️ Clean image verified${llmSaysClean ? ' by RF-DETR + second AI check' : ' by RF-DETR'}. Discarding file: ${file.filename}`);
+      console.log(`[UploadController] 🗑️ Clean image verified${llmSaysClean ? ` by ${modelName} + second AI check` : ` by ${modelName}`}. Discarding file: ${file.filename}`);
       try {
         if (fs.existsSync(file.path)) {
           await fs.promises.unlink(file.path);
@@ -172,7 +187,7 @@ exports.processImage = async (req, res) => {
         discarded: true,
         message: llmSaysClean
           ? 'A second AI check reviewed the detector findings and found no real civic defect in this photo, so it was not reported.'
-          : 'No civic hazards or defects detected by RF-DETR. Image verified as clean and discarded.',
+          : `No civic hazards or defects detected by ${modelName}. Image verified as clean and discarded.`,
         data: {
           discarded: true,
           aiDetection: inferenceResult,
@@ -206,6 +221,7 @@ exports.processImage = async (req, res) => {
       ward: 'Ettimadai Ward',
       imageUrl: relativeImageUrl,
       confidence: inferenceResult.confidence,
+      detectorModel: modelName,
       detectedBboxes: inferenceResult.bboxes.map((b) => ({
         box: b.box,
         label: b.label,
@@ -371,6 +387,45 @@ exports.processImage = async (req, res) => {
   } catch (err) {
     console.error('[UploadController] Error processing image:', err);
     res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// POST /api/upload/compare-models  (multipart: image)
+// Runs every trained detector on the same photo for the model comparison page. Nothing is
+// stored: no report, no e-mail, and the uploaded file is deleted afterwards.
+exports.compareModels = async (req, res) => {
+  const file = req.file;
+  if (!file) return res.status(400).json({ success: false, error: 'No image file uploaded.' });
+  try {
+    const data = await AiInferenceService.compareModels(path.resolve(file.path));
+    const ran = Object.values(data.results).filter((r) => r.available);
+    console.log(
+      `[Compare] ${ran.map((r) => `${r.model}: ${r.category} @ ${Math.round((r.confidence || 0) * 100)}% in ${r.inferenceMs}ms`).join(' | ')}`
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[Compare] failed:', err.message);
+    res.status(err.status || 500).json({ success: false, code: err.code, error: err.message });
+  } finally {
+    await removeUpload(file);
+    // A HEIC upload is also saved as JPEG by the model service
+    const jpg = file.path.replace(/\.(heic|heif)$/i, '.jpg');
+    if (jpg !== file.path) await removeUpload({ path: jpg });
+  }
+};
+
+// GET /api/models
+// Every detector with its availability, checkpoint and saved test-set metrics
+exports.listModels = async (req, res) => {
+  try {
+    const data = await AiInferenceService.listModels();
+    res.json({ success: true, data: { default: data.default, models: data.models } });
+  } catch (err) {
+    res.status(503).json({
+      success: false,
+      code: 'MODEL_UNAVAILABLE',
+      error: 'The model service is not running. Start it with: python backend/inference_server.py',
+    });
   }
 };
 

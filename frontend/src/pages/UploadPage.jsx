@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Navbar from '../components/common/Navbar';
 import Footer from '../components/common/Footer';
 import ImageDropzone from '../components/upload/ImageDropzone';
+import ModelSelector from '../components/upload/ModelSelector';
 import ExifDataViewer from '../components/upload/ExifDataViewer';
 import LocationPickerMap from '../components/upload/LocationPickerMap';
 import { CheckCircle2, ArrowRight, UploadCloud, MapPin, Sparkles, Mail, Copy, Search, Check, Clock } from 'lucide-react';
@@ -23,6 +24,7 @@ export default function UploadPage({
   const [email, setEmail] = useState(getSavedEmail);
   const [emailTouched, setEmailTouched] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('rfdetr');
 
   const emailValid = EMAIL_RE.test(email.trim());
   const showEmailError = emailTouched && !emailValid;
@@ -640,8 +642,11 @@ export default function UploadPage({
               )}
             </div>
 
+            {/* Which trained detector analyses the photo (RF-DETR by default) */}
+            <ModelSelector value={selectedModel} onChange={setSelectedModel} />
+
             {/* Step 1: Dropzone (enabled once a valid email is entered) */}
-            <ImageDropzone onImageProcessed={handleImageProcessed} email={email.trim()} disabled={!emailValid} />
+            <ImageDropzone onImageProcessed={handleImageProcessed} email={email.trim()} disabled={!emailValid} model={selectedModel} />
 
             {/* Second AI check on the detector's result */}
             {imageData && !imageData.discarded && imageData.aiReview && (
@@ -791,7 +796,7 @@ export default function UploadPage({
                       lineHeight: 1.6,
                     }}
                   >
-                    The RF-DETR model analyzed your image and found <strong>zero civic defects</strong> (no potholes,
+                    The {imageData.modelName || 'RF-DETR'} model analyzed your image and found <strong>zero civic defects</strong> (no potholes,
                     no structural cracks, no damaged manholes, and no litter).
                     <br />
                     Per quality control policy, <strong>clean images are immediately discarded</strong> and no ticket is

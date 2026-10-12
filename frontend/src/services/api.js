@@ -41,14 +41,26 @@ const qs = (params = {}) => {
 export const api = {
   // ---------------------------------------------------------------- public (citizens)
   // `email` is required: the report ID is sent there so the citizen can track the report
-  async uploadAndAnalyzeImage(file, manualCoords = {}, email = '') {
+  async uploadAndAnalyzeImage(file, manualCoords = {}, email = '', model = 'rfdetr') {
     const form = new FormData();
     form.append('image', file);
     form.append('email', email);
+    form.append('model', model);
     if (manualCoords.lat) form.append('manualLat', manualCoords.lat);
     if (manualCoords.lng) form.append('manualLng', manualCoords.lng);
     const json = await request('/upload/process-image', { method: 'POST', form, auth: false });
     return { ...(json.data || {}), discarded: Boolean(json.discarded), message: json.message || '' };
+  },
+
+  // Model comparison: every trained detector on the same photo (nothing is stored)
+  async compareModels(file) {
+    const form = new FormData();
+    form.append('image', file);
+    return (await request('/upload/compare-models', { method: 'POST', form, auth: false })).data;
+  },
+  // Detector catalogue: availability, checkpoint and saved test-set metrics
+  async listModels() {
+    return (await request('/upload/models', { auth: false })).data;
   },
 
   // The citizen may fix the map pin for 30 minutes after uploading (no account needed)

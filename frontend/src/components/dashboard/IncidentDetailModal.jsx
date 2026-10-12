@@ -79,18 +79,20 @@ export default function IncidentDetailModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Image Header with Bounding Box Overlay & Toggle */}
-        <div style={{ position: 'relative', height: '240px', width: '100%', background: '#0f172a', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', height: '240px', width: '100%', background: '#0f172a', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {/* The photo is shown whole (not cropped) so the boxes, which are fractions of the full photo, line up */}
+          <div style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}>
           <img
             src={resolveImageUrl(incident.imageUrl, incident.category)}
             alt={incident.title}
             onError={(e) => handleImageError(e, incident.category)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            style={{ display: 'block', maxWidth: '100%', maxHeight: '240px', width: 'auto', height: 'auto' }}
           />
 
           {/* Bounding Box Visualizer Overlay */}
           {showBboxes &&
-            bboxes.map((b, i) => {
-              const box = b.box || [0.2, 0.2, 0.8, 0.8];
+            bboxes.filter((b) => Array.isArray(b.box)).map((b, i) => {
+              const box = b.box;
               const top = box[0] * 100;
               const left = box[1] * 100;
               const height = (box[2] - box[0]) * 100;
@@ -128,11 +130,12 @@ export default function IncidentDetailModal({
                       boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
                     }}
                   >
-                    {(b.label || incident.category).replace('_', ' ')} {b.score ? `${Math.round(b.score * 100)}%` : ''}
+                    {(b.label || incident.category).replace(/_/g, ' ')} {b.score ? `${Math.round(b.score * 100)}%` : ''}
                   </span>
                 </div>
               );
             })}
+          </div>
 
           {/* Close Button */}
           <button

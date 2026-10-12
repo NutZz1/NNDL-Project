@@ -28,7 +28,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
     service: 'CivicScan Backend API',
-    modelAlignment: 'RF-DETR + YOLO baseline (8 locked classes)',
+    modelAlignment: 'RF-DETR (production) + YOLOv11 / RT-DETR (comparison), 8 locked classes',
     sdgImpact: ['SDG-11 Sustainable Cities', 'SDG-12 Responsible Waste', 'SDG-13 Climate Action'],
     timestamp: new Date().toISOString(),
   });

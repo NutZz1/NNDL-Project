@@ -3,6 +3,7 @@ import LandingPage from './pages/LandingPage';
 import UploadPage from './pages/UploadPage';
 import DashboardPage from './pages/DashboardPage';
 import TrackPage from './pages/TrackPage';
+import ComparePage from './pages/ComparePage';
 import TeamWorkspacePage from './pages/TeamWorkspacePage';
 import LoginModal from './components/common/LoginModal';
 import { INITIAL_KPIS } from './services/mockData';
@@ -127,7 +128,9 @@ export default function App() {
 
       {currentPage === 'upload' && <UploadPage onNavigate={handleNavigate} onOpenLogin={() => setIsLoginModalOpen(true)} isLoggedIn={isLoggedIn} onAddIncident={handleAddIncident} />}
 
-      {currentPage === 'track' && <TrackPage onNavigate={handleNavigate} onOpenLogin={() => setIsLoginModalOpen(true)} isLoggedIn={isLoggedIn} initialCode={trackCode} />}
+      {currentPage === 'compare' && <ComparePage onNavigate={handleNavigate} onOpenLogin={() => setIsLoginModalOpen(true)} isLoggedIn={isLoggedIn} />}
+
+      {currentPage === 'track' &&<TrackPage onNavigate={handleNavigate} onOpenLogin={() => setIsLoginModalOpen(true)} isLoggedIn={isLoggedIn} initialCode={trackCode} />}
 
       {currentPage === 'dashboard' && user && isOfficer(user) && (
         <DashboardPage

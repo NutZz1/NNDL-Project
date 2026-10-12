@@ -88,30 +88,31 @@ export default function ExifDataViewer({
           marginBottom: '24px',
         }}
       >
-        {/* Left: Image with Bounding Box Overlay */}
-        <div style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden' }}>
+        {/* Left: Image with Bounding Box Overlay. The image keeps its own aspect ratio (no crop),
+            so boxes given as fractions of the full photo land on the right pixels. */}
+        <div style={{ alignSelf: 'start', background: '#0f172a', borderRadius: '12px', overflow: 'hidden' }}>
+        <div style={{ position: 'relative' }}>
           <img
             src={resolveImageUrl(imageData.previewUrl, imageData.category)}
             alt="Defect Analysis"
             onError={(e) => handleImageError(e, imageData.category)}
             style={{
               width: '100%',
-              height: '240px',
-              objectFit: 'cover',
+              height: 'auto',
               display: 'block',
             }}
           />
 
-          {/* Real AI Bounding Boxes from RF-DETR Model */}
+          {/* Real AI Bounding Boxes from the selected detector */}
           {Array.isArray(imageData.bboxes) &&
-            imageData.bboxes.map((b, idx) => {
-              const box = b.box || [0.2, 0.2, 0.8, 0.8];
+            imageData.bboxes.filter((b) => Array.isArray(b.box)).map((b, idx) => {
+              const box = b.box;
               const top = box[0] * 100;
               const left = box[1] * 100;
               const height = (box[2] - box[0]) * 100;
               const width = (box[3] - box[1]) * 100;
-              const labelName = (b.label || currentClass.label).replace('_', ' ');
-              const scorePct = Math.round((b.score || imageData.confidence || 0.9) * 100);
+              const labelName = (b.label || currentClass.label).replace(/_/g, ' ');
+              const scorePct = Math.round((b.score ?? 0) * 100);
 
               return (
                 <div
@@ -132,7 +133,7 @@ export default function ExifDataViewer({
                   <div
                     style={{
                       position: 'absolute',
-                      top: '-24px',
+                      top: top < 8 ? '0px' : '-24px',
                       left: '-2px',
                       background: '#10b981',
                       color: '#ffffff',
@@ -152,6 +153,7 @@ export default function ExifDataViewer({
                 </div>
               );
             })}
+        </div>
         </div>
 
         {/* Right: Clean Extracted Coordinates & AI Defect Detection */}
@@ -211,7 +213,11 @@ export default function ExifDataViewer({
                 {currentClass.label}
               </div>
               <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px', textTransform: 'capitalize' }}>
-                Domain: {currentClass.domain.replace('_', ' ')} • Model: RF-DETR
+                Domain: {currentClass.domain.replace('_', ' ')} •{' '}
+                <span style={{ textTransform: 'none' }}>
+                  Model: {imageData.modelName || 'RF-DETR-Small'}
+                  {typeof imageData.inferenceMs === 'number' && ` • ${Math.round(imageData.inferenceMs)} ms on ${imageData.device || 'cpu'}`}
+                </span>
               </div>
             </div>
           </div>

@@ -36,7 +36,7 @@ class SpatialService {
       incidents.forEach((otherInc, otherIdx) => {
         if (visited.has(otherIdx)) return;
         const [lng2, lat2] = otherInc.location.coordinates;
-        const dist = this.haversineDistance(lat1, lon1, lat2, lon2);
+        const dist = this.haversineDistance(lat1, lng1, lat2, lng2);
         if (dist <= radiusMeters) {
           clusterMembers.push(otherInc);
           visited.add(otherIdx);
