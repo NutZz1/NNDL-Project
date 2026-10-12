@@ -18,7 +18,25 @@ import json
 import time
 import argparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from PIL import Image
+from PIL import Image, ImageOps
+
+# Deployment thresholds. These match scripts/predict.py, which was calibrated on field photos:
+# sigmoid-focal DETR scores are low (a good detection is typically 0.3-0.7), so 0.3 is the
+# default cut, and `litter` gets a stricter 0.5 because it fires on any grey textured surface
+# (concrete, gravel inside potholes) and would otherwise steal the box from the hazard classes.
+DEFAULT_SCORE_THRESH = 0.4
+DEFAULT_CLASS_THRESH = {"litter": 0.5}
+# Boxes between this floor and the threshold are returned separately as `candidates`: the
+# detector was unsure about them, so the verification agent decides whether any is a real defect.
+DEFAULT_CANDIDATE_FLOOR = 0.15
+
+
+def open_upright(path_or_file):
+    """Open a photo the way a phone shows it. Phones store portrait photos sideways plus an
+    EXIF "rotate me" flag; without applying it the model sees a sideways picture and the boxes
+    do not line up with the photo the browser displays. Returns (upright RGB image, raw image)."""
+    raw = Image.open(path_or_file)
+    return ImageOps.exif_transpose(raw).convert("RGB"), raw
 
 try:
     import pillow_heif
@@ -39,10 +57,12 @@ from civicscan.models import build_model_and_criterion, postprocess
 from civicscan.data.transforms import build_transforms
 from civicscan.schema import CATEGORIES
 
-# Checkpoint priority: rfdetr_run2 (Epoch 56, 46.0% / ~47% mAP50) -> fallback runs/rfdetr
+# Checkpoint priority: rfdetr_run4_700px (the final model: 700 px, test mAP50 47.2%)
+# -> rfdetr_run2 -> runs/rfdetr. CIVICSCAN_CKPT in the environment overrides all of them.
+RUN4_CKPT = os.path.join(TRAINING_DIR, "runs", "rfdetr_run4_700px", "best.pt")
 RUN2_CKPT = os.path.join(TRAINING_DIR, "runs", "rfdetr_run2", "best.pt")
 RUN1_CKPT = os.path.join(TRAINING_DIR, "runs", "rfdetr", "best.pt")
-DEFAULT_CKPT = RUN2_CKPT if os.path.exists(RUN2_CKPT) else RUN1_CKPT
+DEFAULT_CKPT = next((c for c in (RUN4_CKPT, RUN2_CKPT, RUN1_CKPT) if os.path.exists(c)), RUN1_CKPT)
 
 GLOBAL_MODEL = None
 GLOBAL_CFG = None
@@ -135,7 +155,7 @@ def extract_gps_from_pil(img):
     return None
 
 
-def run_inference_on_pil(img, score_thresh=0.15):
+def run_inference_on_pil(img, score_thresh=DEFAULT_SCORE_THRESH, class_thresh=None, exif_img=None, candidate_floor=DEFAULT_CANDIDATE_FLOOR):
     model, cfg, device = load_rfdetr_model()
     t0 = time.time()
 
@@ -162,7 +182,7 @@ def run_inference_on_pil(img, score_thresh=0.15):
         [target],
         valid_mask,
         res_size,
-        score_thresh=score_thresh,
+        score_thresh=min([score_thresh, candidate_floor] + list((class_thresh or {}).values())),
         apply_mask=False,
     )
 
@@ -172,8 +192,84 @@ def run_inference_on_pil(img, score_thresh=0.15):
     labels = res[0]["labels"].tolist()
     boxes = res[0]["boxes"].tolist()
 
-    detected_boxes = []
+    class_thresh = {**DEFAULT_CLASS_THRESH, **(class_thresh or {})}
+
+    # A DETR query predicts ONE box with a score for every class, and postprocess returns the
+    # top (query, class) pairs, so the same box comes back once per class (e.g. one pothole
+    # reported as damaged manhole 0.73, litter 0.71, pothole 0.36 ...). Keep one label per box:
+    # the best class that clears its own threshold; the others are kept as `alternatives`.
+    per_box = {}
     for s, l, b in zip(scores, labels, boxes):
+        name = CATEGORIES[l]["name"]
+        key = tuple(round(v, 1) for v in b)
+        per_box.setdefault(key, {"box": b, "cands": []})["cands"].append((s, l, name))
+
+    picked = []
+    weak = []  # best class below its threshold but above the candidate floor
+    for entry in per_box.values():
+        cands = sorted(entry["cands"], key=lambda c: -c[0])
+        passing = [c for c in cands if c[0] >= class_thresh.get(c[2], score_thresh)]
+        if not passing:
+            if cands[0][0] >= candidate_floor:
+                weak.append((cands[0][0], cands[0][1], entry["box"], [{"label": c[2], "score": round(c[0], 4)} for c in cands[1:3]]))
+            continue
+        best = passing[0]
+        alts = [{"label": c[2], "score": round(c[0], 4)} for c in cands if c is not best][:3]
+        picked.append((best[0], best[1], entry["box"], alts))
+
+    # Two different queries can also land on the same object with the same class (near-identical
+    # boxes). Keep the stronger one when same-class boxes overlap by more than 70% (IoU).
+    def iou(a, b):
+        ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+        iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+        inter = ix * iy
+        union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+        return inter / union if union > 0 else 0.0
+
+    picked.sort(key=lambda t: -t[0])
+    kept = []
+    for cand in picked:
+        if all(k[1] != cand[1] or iou(k[2], cand[2]) <= 0.7 for k in kept):
+            kept.append(cand)
+    picked = kept
+
+    # Uncertain candidates: one per object (drop any that overlaps a confident box or a
+    # stronger candidate), at most 3, strongest first
+    weak.sort(key=lambda t: -t[0])
+    weak_kept = []
+    def inside(c, k):  # share of the candidate box that lies inside box k
+        ix = max(0.0, min(c[2], k[2]) - max(c[0], k[0]))
+        iy = max(0.0, min(c[3], k[3]) - max(c[1], k[1]))
+        area = (c[2] - c[0]) * (c[3] - c[1])
+        return ix * iy / area if area > 0 else 0.0
+
+    for cand in weak:
+        # same object as an existing box: overlaps it, or lies mostly inside it
+        if all(iou(k[2], cand[2]) <= 0.3 and inside(cand[2], k[2]) <= 0.6 for k in picked + weak_kept):
+            weak_kept.append(cand)
+    weak_kept = weak_kept[:3]
+
+    def to_box(s, l, b, alts):
+        cat_info = CATEGORIES[l]
+        xmin, ymin, xmax, ymax = b
+        return {
+            "label": cat_info["name"],
+            "domain": cat_info["supercategory"],
+            "score": round(s, 4),
+            "box": [
+                round(max(0.0, min(1.0, ymin / orig_h)), 4),
+                round(max(0.0, min(1.0, xmin / orig_w)), 4),
+                round(max(0.0, min(1.0, ymax / orig_h)), 4),
+                round(max(0.0, min(1.0, xmax / orig_w)), 4),
+            ],
+            "raw_box": [round(x, 1) for x in b],
+            "alternatives": alts,
+        }
+
+    candidates = [to_box(*c) for c in weak_kept]
+
+    detected_boxes = []
+    for s, l, b, alts in picked:
         cat_info = CATEGORIES[l]
         # Normalize box to [ymin, xmin, ymax, xmax] relative to 0..1
         xmin, ymin, xmax, ymax = b
@@ -189,6 +285,7 @@ def run_inference_on_pil(img, score_thresh=0.15):
             "score": round(s, 4),
             "box": norm_box,
             "raw_box": [round(x, 1) for x in b],
+            "alternatives": alts,
         })
 
     # Sort detections by confidence descending
@@ -207,7 +304,7 @@ def run_inference_on_pil(img, score_thresh=0.15):
         top_confidence = 0.0
         has_defect = False
 
-    exif_data = extract_gps_from_pil(img)
+    exif_data = extract_gps_from_pil(exif_img if exif_img is not None else img)
 
     return {
         "success": True,
@@ -217,10 +314,12 @@ def run_inference_on_pil(img, score_thresh=0.15):
         "confidence": top_confidence,
         "bboxes": detected_boxes,
         "detections_count": len(detected_boxes),
+        "candidates": candidates,
         "inference_ms": inference_ms,
         "device": device,
         "model": "RF-DETR-Small",
         "image_size": [orig_w, orig_h],
+        "thresholds": {"default": score_thresh, "candidate_floor": candidate_floor, **class_thresh},
         "exif": exif_data,
     }
 
@@ -266,10 +365,12 @@ class InferenceHTTPHandler(BaseHTTPRequestHandler):
                 if "application/json" in content_type:
                     data = json.loads(body.decode("utf-8"))
                     image_path = data.get("image_path")
-                    thresh = float(data.get("score_thresh", 0.15))
+                    thresh = float(data.get("score_thresh", DEFAULT_SCORE_THRESH))
+                    class_thresh = data.get("class_thresh") or None
+                    candidate_floor = float(data.get("candidate_floor", DEFAULT_CANDIDATE_FLOOR))
                     if not image_path or not os.path.exists(image_path):
                         return self._send_json(400, {"error": f"Invalid or non-existent image_path: {image_path}"})
-                    img = Image.open(image_path).convert("RGB")
+                    img, raw = open_upright(image_path)
                     converted_filename = None
                     if image_path.lower().endswith((".heic", ".heif")):
                         jpg_path = os.path.splitext(image_path)[0] + ".jpg"
@@ -277,11 +378,13 @@ class InferenceHTTPHandler(BaseHTTPRequestHandler):
                         converted_filename = os.path.basename(jpg_path)
                 else:
                     # Raw image binary upload
-                    img = Image.open(io.BytesIO(body)).convert("RGB")
-                    thresh = 0.15
+                    img, raw = open_upright(io.BytesIO(body))
+                    thresh = DEFAULT_SCORE_THRESH
+                    class_thresh = None
+                    candidate_floor = DEFAULT_CANDIDATE_FLOOR
                     converted_filename = None
 
-                result = run_inference_on_pil(img, score_thresh=thresh)
+                result = run_inference_on_pil(img, score_thresh=thresh, class_thresh=class_thresh, exif_img=raw, candidate_floor=candidate_floor)
                 if converted_filename:
                     result["converted_filename"] = converted_filename
                 self._send_json(200, result)
@@ -322,7 +425,11 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt", type=str, default=None, help="Custom checkpoint path (.pt)")
     parser.add_argument("--image", type=str, default=None, help="Run single image inference and print JSON")
     parser.add_argument("--test", action="store_true", help="Run test on dummy image and exit")
-    parser.add_argument("--thresh", type=float, default=0.15, help="Detection score threshold")
+    parser.add_argument("--thresh", type=float, default=DEFAULT_SCORE_THRESH, help="Detection score threshold")
+    parser.add_argument("--candidate-floor", type=float, default=DEFAULT_CANDIDATE_FLOOR,
+                        help="weakest score returned as an uncertain candidate for the verification agent")
+    parser.add_argument("--class-thresh", action="append", default=[], metavar="CLASS=THR",
+                        help="per-class threshold, e.g. litter=0.5 (repeatable)")
     args = parser.parse_args()
 
     if args.ckpt:
@@ -339,14 +446,15 @@ if __name__ == "__main__":
         if not os.path.exists(args.image):
             print(f"Error: Image '{args.image}' not found.")
             sys.exit(1)
-        img = Image.open(args.image).convert("RGB")
+        img, raw = open_upright(args.image)
         converted_filename = None
         if args.image.lower().endswith((".heic", ".heif")):
             jpg_path = os.path.splitext(args.image)[0] + ".jpg"
             img.save(jpg_path, format="JPEG", quality=92)
             converted_filename = os.path.basename(jpg_path)
 
-        res = run_inference_on_pil(img, score_thresh=args.thresh)
+        cli_class = {k: float(v) for k, v in (x.split("=") for x in args.class_thresh)} or None
+        res = run_inference_on_pil(img, score_thresh=args.thresh, class_thresh=cli_class, exif_img=raw, candidate_floor=args.candidate_floor)
         if converted_filename:
             res["converted_filename"] = converted_filename
         print(json.dumps(res, indent=2))

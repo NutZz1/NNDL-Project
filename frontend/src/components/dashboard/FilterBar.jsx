@@ -1,13 +1,9 @@
 import React from 'react';
-import { Filter, Search, ShieldAlert, Trash2, Activity } from 'lucide-react';
+import { Filter, ShieldAlert, Trash2, Activity } from 'lucide-react';
 
 export default function FilterBar({
   selectedDomain,
   onDomainChange,
-  statusFilter,
-  onStatusChange,
-  searchTerm,
-  onSearchChange,
   totalCount,
 }) {
   const domains = [
@@ -49,6 +45,7 @@ export default function FilterBar({
                 border: '1px solid #e2e8f0',
                 boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
                 transition: 'all 0.15s ease',
+                cursor: 'pointer',
               }}
             >
               <span style={{ color: isActive ? '#10b981' : '#64748b' }}>{dom.icon}</span>
@@ -58,49 +55,21 @@ export default function FilterBar({
         })}
       </div>
 
-      {/* Right Search & Status Filter */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* Search */}
-        <div style={{ position: 'relative' }}>
-          <Search size={15} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '9px' }} />
-          <input
-            type="text"
-            placeholder="Search address or defect..."
-            value={searchTerm}
-            onChange={(e) => onSearchChange(e.target.value)}
-            style={{
-              padding: '6px 12px 6px 32px',
-              borderRadius: '8px',
-              border: '1px solid #cbd5e1',
-              fontSize: '0.82rem',
-              outline: 'none',
-              background: '#ffffff',
-              width: '210px',
-            }}
-          />
-        </div>
-
-        {/* Status Dropdown */}
-        <select
-          value={statusFilter}
-          onChange={(e) => onStatusChange(e.target.value)}
-          style={{
-            padding: '7px 12px',
-            borderRadius: '8px',
-            border: '1px solid #cbd5e1',
-            fontSize: '0.82rem',
-            fontWeight: 600,
-            color: '#0f172a',
-            outline: 'none',
-            background: '#ffffff',
-          }}
-        >
-          <option value="all">All Statuses</option>
-          <option value="Reported">Reported (Unassigned)</option>
-          <option value="Assigned">Assigned Crew</option>
-          <option value="In Progress">In Progress</option>
-          <option value="Resolved">Resolved</option>
-        </select>
+      {/* Incident Count Badge */}
+      <div
+        style={{
+          fontSize: '0.82rem',
+          fontWeight: 600,
+          color: '#64748b',
+          background: '#ffffff',
+          padding: '6px 14px',
+          borderRadius: '8px',
+          border: '1px solid #e2e8f0',
+        }}
+      >
+        <span>Showing </span>
+        <strong style={{ color: '#0f172a' }}>{totalCount}</strong>
+        <span> mapped incidents</span>
       </div>
     </div>
   );

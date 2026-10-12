@@ -1,10 +1,12 @@
 import React from 'react';
 import {
   LayoutDashboard,
+  TrendingUp,
   Settings,
   ChevronLeft,
   ChevronRight,
   Leaf,
+  LogOut,
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -13,9 +15,14 @@ export default function Sidebar({
   isCollapsed,
   onToggleCollapse,
   onNavigateHome,
+  items,
+  user,
+  onLogout,
 }) {
-  const navItems = [
+  // Role-specific menus are passed in as `items`; the default keeps the original two tabs
+  const navItems = items || [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+    { id: 'analytics', label: 'Analytics', icon: <TrendingUp size={18} /> },
   ];
 
   return (
@@ -142,11 +149,12 @@ export default function Sidebar({
                   {!isCollapsed && <span>{item.label}</span>}
                 </div>
 
-                {!isCollapsed && item.badge && (
+                {!isCollapsed && Boolean(item.badge) && (
                   <span
+                    aria-label={`${item.badge} waiting`}
                     style={{
-                      background: item.badge === '4' ? '#fee2e2' : '#f1f5f9',
-                      color: item.badge === '4' ? '#dc2626' : '#64748b',
+                      background: item.badgeAlert ? '#fee2e2' : '#f1f5f9',
+                      color: item.badgeAlert ? '#dc2626' : '#64748b',
                       fontSize: '0.72rem',
                       fontWeight: 700,
                       padding: '2px 7px',
@@ -162,8 +170,36 @@ export default function Sidebar({
         </nav>
       </div>
 
-      {/* Bottom Area: Settings */}
+      {/* Bottom Area: signed-in user, sign out, settings */}
       <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {user && !isCollapsed && (
+          <div style={{ padding: '0 12px', fontSize: '0.8rem', color: '#64748b' }}>
+            <div style={{ fontWeight: 800, color: '#0f172a' }}>{user.name}</div>
+            <div>{user.role === 'municipal_officer' ? 'Municipal Officer' : user.team === 'litter' ? 'Litter Management Team' : 'Road & Structural Team'}</div>
+          </div>
+        )}
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: isCollapsed ? 'center' : 'flex-start',
+              gap: '10px',
+              padding: isCollapsed ? '10px 0' : '9px 12px',
+              borderRadius: '8px',
+              fontSize: '0.88rem',
+              color: '#b91c1c',
+              cursor: 'pointer',
+              background: 'transparent',
+              border: 'none',
+            }}
+            title="Sign out"
+          >
+            <LogOut size={18} />
+            {!isCollapsed && <span>Sign out</span>}
+          </button>
+        )}
 
         <button
           onClick={() => onTabChange('settings')}

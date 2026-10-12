@@ -1,10 +1,22 @@
 import React, { useState } from 'react';
-import { X, ShieldCheck, KeyRound, Mail, ArrowRight, UserCheck, AlertCircle } from 'lucide-react';
+import { X, ShieldCheck, KeyRound, Mail, ArrowRight, AlertCircle } from 'lucide-react';
 import { api } from '../../services/api';
 
+// Demo accounts for local development only: read from frontend/.env.local (git-ignored) and
+// shown only by the dev server, never in a production build.
+const DEMO_LOGINS = (() => {
+  if (!import.meta.env.DEV || !import.meta.env.VITE_DEMO_LOGINS) return [];
+  try {
+    const list = JSON.parse(import.meta.env.VITE_DEMO_LOGINS);
+    return Array.isArray(list) ? list.filter((a) => a && a.email && a.password) : [];
+  } catch {
+    return [];
+  }
+})();
+
 export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
-  const [email, setEmail] = useState('test1@gmail.com');
-  const [password, setPassword] = useState('test123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -17,32 +29,12 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
 
     try {
       const res = await api.login(email, password);
-      if (res.success && res.data) {
+      if (res.success && res.data && res.data.token) {
+        setPassword('');
         onLoginSuccess(res.data);
         onClose();
       } else {
         setErrorMessage(res.error || 'Invalid credentials. Please check your email and password.');
-      }
-    } catch (err) {
-      setErrorMessage(err.message || 'Login error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickDemoLogin = async () => {
-    setEmail('test1@gmail.com');
-    setPassword('test123');
-    setLoading(true);
-    setErrorMessage('');
-
-    try {
-      const res = await api.login('test1@gmail.com', 'test123');
-      if (res.success && res.data) {
-        onLoginSuccess(res.data);
-        onClose();
-      } else {
-        setErrorMessage(res.error || 'Authentication error');
       }
     } catch (err) {
       setErrorMessage(err.message || 'Login error');
@@ -123,43 +115,11 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
               marginBottom: '6px',
             }}
           >
-            Municipal Officer Portal
+            Staff sign-in
           </h3>
           <p style={{ fontSize: '0.88rem', color: '#64748b' }}>
-            Connected to Live MongoDB Atlas Cluster
+            For the Municipal Officer and the Litter and Road team managers. Citizens do not need an account.
           </p>
-        </div>
-
-        {/* Quick Demo One-Click Access */}
-        <div
-          onClick={handleQuickDemoLogin}
-          style={{
-            background: 'linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%)',
-            border: '1.5px solid #10b981',
-            borderRadius: '10px',
-            padding: '12px 16px',
-            marginBottom: '18px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            transition: 'all 0.2s',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <UserCheck size={20} color="#059669" />
-            <div>
-              <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#065f46' }}>
-                1-Click Login: test1@gmail.com
-              </div>
-              <div style={{ fontSize: '0.75rem', color: '#047857' }}>
-                Password: test123 • Municipal Officer
-              </div>
-            </div>
-          </div>
-          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#059669' }}>
-            Sign In →
-          </span>
         </div>
 
         {/* Error notification if any */}
@@ -194,6 +154,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
               <Mail size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '12px' }} />
               <input
                 type="email"
+                autoComplete="username"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -219,6 +180,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
               <KeyRound size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px', top: '12px' }} />
               <input
                 type="password"
+                autoComplete="current-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -256,10 +218,46 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess }) {
             onMouseOver={(e) => (e.currentTarget.style.background = '#047857')}
             onMouseOut={(e) => (e.currentTarget.style.background = '#059669')}
           >
-            {loading ? 'Authenticating with MongoDB Atlas...' : 'Sign In as Officer'}
+            {loading ? 'Signing in...' : 'Sign in'}
             {!loading && <ArrowRight size={17} />}
           </button>
         </form>
+
+        {DEMO_LOGINS.length > 0 && (
+          <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#64748b', marginBottom: '8px' }}>
+              Demo accounts (local only): click one to fill the form
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {DEMO_LOGINS.map((a) => (
+                <button
+                  key={a.email}
+                  type="button"
+                  onClick={() => {
+                    setEmail(a.email);
+                    setPassword(a.password);
+                    setErrorMessage('');
+                  }}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: `1px solid ${email === a.email ? '#10b981' : '#e2e8f0'}`,
+                    background: email === a.email ? '#ecfdf5' : '#f8fafc',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>{a.role || 'Account'}</span>
+                  <span style={{ fontSize: '0.78rem', color: '#64748b', fontFamily: 'monospace' }}>{a.email}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

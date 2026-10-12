@@ -3,6 +3,8 @@ const Incident = require('../models/Incident');
 // GET /api/kpi/summary
 exports.getKpiSummary = async (req, res) => {
   try {
+    // A team manager's numbers only count their own team
+    const scope = req.scope && req.scope.team ? { team: req.scope.team } : {};
     let totalReports = 0;
     let activeAssets = 0;
     let notSeenDays = 0;
@@ -12,18 +14,18 @@ exports.getKpiSummary = async (req, res) => {
     let resolvedThisMonth = 0;
 
     try {
-      totalReports = await Incident.countDocuments();
-      activeAssets = await Incident.countDocuments({ status: { $ne: 'Resolved' } });
-      unassignedDevices = await Incident.countDocuments({
+      totalReports = await Incident.countDocuments(scope);
+      activeAssets = await Incident.countDocuments({ ...scope, status: { $ne: 'Resolved' } });
+      unassignedDevices = await Incident.countDocuments({ ...scope,
         status: { $ne: 'Resolved' },
         $or: [{ assignedTeam: 'Unassigned' }, { assignedTeam: { $exists: false } }],
       });
-      lowIssues = await Incident.countDocuments({ severity: 'Low', status: { $ne: 'Resolved' } });
-      criticalIssues = await Incident.countDocuments({ severity: 'Critical', status: { $ne: 'Resolved' } });
-      resolvedThisMonth = await Incident.countDocuments({ status: 'Resolved' });
+      lowIssues = await Incident.countDocuments({ ...scope, severity: 'Low', status: { $ne: 'Resolved' } });
+      criticalIssues = await Incident.countDocuments({ ...scope, severity: 'Critical', status: { $ne: 'Resolved' } });
+      resolvedThisMonth = await Incident.countDocuments({ ...scope, status: 'Resolved' });
 
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-      notSeenDays = await Incident.countDocuments({
+      notSeenDays = await Incident.countDocuments({ ...scope,
         status: { $ne: 'Resolved' },
         createdAt: { $lt: sevenDaysAgo },
       });
@@ -43,10 +45,11 @@ exports.getKpiSummary = async (req, res) => {
       totalLocationUpdates: totalReports,
       lastUpdated: new Date().toISOString(),
       officer: {
-        name: 'Tom Miller',
-        role: 'Municipal Field Supervisor',
+        name: req.user ? req.user.name : 'Officer',
+        role: req.user && req.user.role === 'municipal_officer' ? 'Municipal Officer' : 'Team Manager',
+        team: req.user ? req.user.team : null,
         ward: 'Amrita Campus - Ettimadai Ward',
-        organization: 'Amrita Civic & Infrastructure Authority',
+        organization: (req.user && req.user.organization) || 'Amrita Civic & Infrastructure Authority',
       },
       wardMetrics: {
         name: 'Amrita Vishwa Vidyapeetham Sector',

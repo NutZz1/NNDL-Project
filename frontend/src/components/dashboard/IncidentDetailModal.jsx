@@ -249,6 +249,33 @@ export default function IncidentDetailModal({
             {incident.description || 'Defect flagged by automatic visual inspection feed.'}
           </p>
 
+          {/* Auto-dispatch agent decision */}
+          {incident.dispatch?.reason && (
+            <div
+              style={{
+                background: incident.dispatch.needsReview ? '#fffbeb' : '#f0fdf4',
+                border: `1px solid ${incident.dispatch.needsReview ? '#fde68a' : '#bbf7d0'}`,
+                borderRadius: '10px',
+                padding: '12px 14px',
+                marginBottom: '16px',
+                fontSize: '0.82rem',
+                color: '#334155',
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ fontWeight: 800, color: incident.dispatch.needsReview ? '#92400e' : '#166534', marginBottom: '4px' }}>
+                {incident.dispatch.needsReview ? 'Needs officer review' : 'Auto-dispatched'}
+                {incident.reportCode ? ` • ${incident.reportCode}` : ''}
+              </div>
+              {incident.dispatch.reason}
+              {incident.dispatch.targetBy && !incident.dispatch.needsReview && (
+                <div style={{ marginTop: '4px', color: '#64748b' }}>
+                  Due by {new Date(incident.dispatch.targetBy).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Location & Meta info */}
           <div
             style={{

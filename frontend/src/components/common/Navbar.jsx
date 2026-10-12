@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, LogIn, LayoutDashboard, Menu, X, Leaf, UploadCloud } from 'lucide-react';
+import { ShieldCheck, LogIn, LayoutDashboard, Menu, X, Leaf, UploadCloud, Search } from 'lucide-react';
 
 export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedIn }) {
   const [scrolled, setScrolled] = useState(false);
@@ -228,6 +228,27 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
             <span>Upload Photo</span>
           </button>
 
+          {/* Track a report by its ID */}
+          <button
+            onClick={() => onNavigate('track')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              borderRadius: '8px',
+              fontSize: '0.86rem',
+              fontWeight: 700,
+              background: currentPage === 'track' ? '#e6f7ef' : '#ffffff',
+              color: '#047857',
+              border: '1px solid #bbf7d0',
+              cursor: 'pointer',
+            }}
+          >
+            <Search size={16} />
+            <span>Track Report</span>
+          </button>
+
           {/* Login or Dashboard Button */}
           {isLoggedIn ? (
             <button
@@ -331,6 +352,28 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
           >
             <UploadCloud size={18} />
             <span>Upload Street Photo</span>
+          </button>
+          <button
+            onClick={() => {
+              setMobileMenuOpen(false);
+              onNavigate('track');
+            }}
+            style={{
+              textAlign: 'left',
+              padding: '8px 0',
+              fontSize: '1rem',
+              fontWeight: 700,
+              color: '#047857',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <Search size={18} />
+            <span>Track Report</span>
           </button>
           <button
             onClick={() => handleNavClick('about')}

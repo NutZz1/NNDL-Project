@@ -12,3 +12,6 @@ uploads/*
 # Logs
 *.log
 npm-debug.log*
+
+# Locally generated staff logins (scripts/seedUsers.js)
+.seed-credentials.local

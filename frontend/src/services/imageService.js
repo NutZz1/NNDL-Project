@@ -3,6 +3,9 @@
  * Provides robust image URL resolution, base64 conversion, and category-tailored fallbacks.
  */
 
+// Photos are served by the backend; follow VITE_API_URL like services/api.js does
+const API_ORIGIN = ((import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
+
 export const CATEGORY_FALLBACK_IMAGES = {
   litter: 'https://images.unsplash.com/photo-1618477461853-cf6ed80faba5?auto=format&fit=crop&w=800&q=80',
   pothole: 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
@@ -28,28 +31,24 @@ export function getCategoryFallback(category) {
 /**
  * Resolves an image URL safely:
  * - Prepends backend server host if it is a relative /uploads path
- * - Returns valid fallback if url is empty or invalid
+ * - Returns clean URL without swapping user photos for stock photos
  */
 export function resolveImageUrl(url, category = 'litter') {
   if (!url || typeof url !== 'string' || url.trim() === '') {
-    return getCategoryFallback(category);
+    return '';
   }
   const trimmed = url.trim();
   if (trimmed.startsWith('/uploads')) {
-    return `http://localhost:5000${trimmed}`;
+    return `${API_ORIGIN}${trimmed}`;
   }
   return trimmed;
 }
 
 /**
- * Image onError handler to cleanly replace broken image URLs with verified category fallbacks
+ * Image onError handler: Logs load issue without silently replacing user uploads with fake stock photos
  */
 export function handleImageError(e, category = 'litter') {
-  const fallback = getCategoryFallback(category);
-  if (e?.currentTarget && e.currentTarget.src !== fallback) {
-    e.currentTarget.onerror = null; // Prevent infinite loop if fallback fails
-    e.currentTarget.src = fallback;
-  }
+  console.warn('[imageService] Image failed to render:', e?.currentTarget?.src);
 }
 
 /**

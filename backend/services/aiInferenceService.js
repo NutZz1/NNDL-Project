@@ -17,6 +17,27 @@ const { execFile } = require('child_process');
 
 const INFERENCE_URL = process.env.INFERENCE_SERVICE_URL || 'http://127.0.0.1:5001/predict';
 
+// Detection thresholds: 0.40 for every class, 0.50 for litter (it over-triggers on grey
+// textured surfaces). Boxes between CANDIDATE_FLOOR and the threshold come back as
+// `candidates`: the verification agent keeps one only if it clearly sees a real defect.
+// Override with INFERENCE_SCORE_THRESH=0.4  INFERENCE_CLASS_THRESH={"litter":0.5}
+//               INFERENCE_CANDIDATE_FLOOR=0.15
+const SCORE_THRESH = (() => {
+  const v = Number(process.env.INFERENCE_SCORE_THRESH);
+  return Number.isFinite(v) && v > 0 ? v : 0.4;
+})();
+const CANDIDATE_FLOOR = (() => {
+  const v = Number(process.env.INFERENCE_CANDIDATE_FLOOR);
+  return Number.isFinite(v) && v > 0 ? v : 0.15;
+})();
+const CLASS_THRESH = (() => {
+  try {
+    return { litter: 0.5, ...(process.env.INFERENCE_CLASS_THRESH ? JSON.parse(process.env.INFERENCE_CLASS_THRESH) : {}) };
+  } catch {
+    return { litter: 0.5 };
+  }
+})();
+
 const CLASS_METADATA = {
   crack_longitudinal: { domain: 'road_damage', defaultSeverity: 'Low', label: 'Longitudinal Crack' },
   crack_transverse: { domain: 'road_damage', defaultSeverity: 'Low', label: 'Transverse Crack' },
@@ -34,14 +55,14 @@ class AiInferenceService {
    * @param {string} imagePath Full absolute path to image on disk
    * @param {number} scoreThresh Minimum detection confidence threshold
    */
-  static async runInference(imagePath, scoreThresh = 0.15) {
+  static async runInference(imagePath, scoreThresh = SCORE_THRESH, classThresh = CLASS_THRESH) {
     const t0 = Date.now();
     try {
       // 1. Try fast HTTP call to daemon microservice on port 5001
       const res = await fetch(INFERENCE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_path: imagePath, score_thresh: scoreThresh }),
+        body: JSON.stringify({ image_path: imagePath, score_thresh: scoreThresh, class_thresh: classThresh, candidate_floor: CANDIDATE_FLOOR }),
       });
 
       if (res.ok) {
@@ -55,6 +76,8 @@ class AiInferenceService {
             label: 'Clean Infrastructure (No Defects)',
             confidence: 0,
             bboxes: [],
+            candidates: data.candidates || [],
+            convertedFilename: data.converted_filename || null,
             detectionsCount: 0,
             model: data.model || 'RF-DETR-Small',
             device: data.device || 'cuda:0',
@@ -75,6 +98,7 @@ class AiInferenceService {
           label: meta.label,
           confidence: data.confidence,
           bboxes: data.bboxes || [],
+          candidates: data.candidates || [],
           detectionsCount: data.detections_count || 0,
           model: data.model || 'RF-DETR-Small',
           device: data.device || 'cuda:0',
@@ -93,7 +117,8 @@ class AiInferenceService {
       const pythonExe = path.join(__dirname, '..', '..', 'civicscan-model', '.venv', 'Scripts', 'python.exe');
       const scriptPath = path.join(__dirname, '..', 'inference_server.py');
 
-      execFile(pythonExe, [scriptPath, '--image', imagePath, '--thresh', String(scoreThresh)], (err, stdout) => {
+      const classArgs = Object.entries(classThresh || {}).flatMap(([k, v]) => ['--class-thresh', `${k}=${v}`]);
+      execFile(pythonExe, [scriptPath, '--image', imagePath, '--thresh', String(scoreThresh), '--candidate-floor', String(CANDIDATE_FLOOR), ...classArgs], (err, stdout) => {
         if (!err && stdout) {
           try {
             const firstBrace = stdout.indexOf('{');
@@ -111,6 +136,8 @@ class AiInferenceService {
                 label: 'Clean Infrastructure (No Defects)',
                 confidence: 0,
                 bboxes: [],
+                candidates: data.candidates || [],
+                convertedFilename: data.converted_filename || null,
                 detectionsCount: 0,
                 model: 'RF-DETR-Small (CLI)',
                 device: data.device || 'cuda:0',
@@ -130,6 +157,7 @@ class AiInferenceService {
               label: meta.label,
               confidence: data.confidence,
               bboxes: data.bboxes || [],
+              candidates: data.candidates || [],
               detectionsCount: data.detections_count || 0,
               model: 'RF-DETR-Small (CLI)',
               device: data.device || 'cuda:0',
@@ -179,3 +207,4 @@ class AiInferenceService {
 }
 
 module.exports = AiInferenceService;
+module.exports.CLASS_METADATA = CLASS_METADATA;

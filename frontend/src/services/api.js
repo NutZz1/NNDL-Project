@@ -1,136 +1,146 @@
-import { INITIAL_KPIS, INITIAL_INCIDENTS } from './mockData';
+import { INITIAL_KPIS } from './mockData';
+import { getToken, clearSession } from './auth';
 
-const BASE_URL = 'http://localhost:5000/api';
+const BASE_URL = (import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:5000/api';
+
+// Staff requests carry the login token; a 401 anywhere ends the session
+async function request(path, { method = 'GET', body, form, auth = true } = {}) {
+  const headers = {};
+  const token = auth ? getToken() : null;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined && !form) headers['Content-Type'] = 'application/json';
+
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers,
+      body: form || (body !== undefined ? JSON.stringify(body) : undefined),
+    });
+  } catch {
+    const err = new Error('Cannot reach the CivicScan server. Please check your connection and try again.');
+    err.status = 0;
+    throw err;
+  }
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 401 && token) clearSession();
+  if (!res.ok) {
+    const err = new Error(json.error || 'Something went wrong. Please try again.');
+    err.status = res.status;
+    err.code = json.code;
+    throw err;
+  }
+  return json;
+}
+
+const qs = (params = {}) => {
+  const p = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '' && v !== 'all-teams');
+  return p.length ? `?${new URLSearchParams(p).toString()}` : '';
+};
 
 export const api = {
-  // Upload and analyze image with RF-DETR model and persist to database
-  async uploadAndAnalyzeImage(file, manualCoords = {}) {
-    const formData = new FormData();
-    formData.append('image', file);
-    if (manualCoords.lat) formData.append('manualLat', manualCoords.lat);
-    if (manualCoords.lng) formData.append('manualLng', manualCoords.lng);
-
-    const res = await fetch(`${BASE_URL}/upload/process-image`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || 'Failed to process image with model');
-    }
-    const json = await res.json();
-    return {
-      ...(json.data || {}),
-      discarded: Boolean(json.discarded),
-      message: json.message || '',
-    };
+  // ---------------------------------------------------------------- public (citizens)
+  // `email` is required: the report ID is sent there so the citizen can track the report
+  async uploadAndAnalyzeImage(file, manualCoords = {}, email = '') {
+    const form = new FormData();
+    form.append('image', file);
+    form.append('email', email);
+    if (manualCoords.lat) form.append('manualLat', manualCoords.lat);
+    if (manualCoords.lng) form.append('manualLng', manualCoords.lng);
+    const json = await request('/upload/process-image', { method: 'POST', form, auth: false });
+    return { ...(json.data || {}), discarded: Boolean(json.discarded), message: json.message || '' };
   },
-  // Fetch Dashboard KPIs
+
+  // The citizen may fix the map pin for 30 minutes after uploading (no account needed)
+  async updateReportLocation(code, lat, lng, editToken) {
+    const json = await request(`/upload/report/${encodeURIComponent(code)}/location`, {
+      method: 'PATCH',
+      body: { lat, lng, editToken },
+      auth: false,
+    });
+    return json.data;
+  },
+
+  // Public report lookup by tracking ID (no login)
+  async trackReport(code) {
+    const json = await request(`/track/${encodeURIComponent(code)}`, { auth: false });
+    return json.data;
+  },
+
+  // ---------------------------------------------------------------- staff login
+  async login(email, password) {
+    try {
+      const json = await request('/auth/login', { method: 'POST', body: { email, password }, auth: false });
+      return { success: true, data: json.data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+  async me() {
+    return (await request('/auth/me')).data;
+  },
+
+  // ---------------------------------------------------------------- legacy dashboard (scoped on the server)
   async getKpis() {
     try {
-      const res = await fetch(`${BASE_URL}/kpi/summary`);
-      if (!res.ok) throw new Error('Network response not ok');
-      const json = await res.json();
-      return json.data;
+      return (await request('/kpi/summary')).data;
     } catch {
       return INITIAL_KPIS;
     }
   },
-
-  // Fetch Incidents
   async getIncidents(params = {}) {
-    try {
-      const query = new URLSearchParams(params).toString();
-      const res = await fetch(`${BASE_URL}/incidents?${query}`);
-      if (!res.ok) throw new Error('Network response not ok');
-      const json = await res.json();
-      return json.data;
-    } catch {
-      return INITIAL_INCIDENTS;
-    }
+    return (await request(`/incidents${qs(params)}`)).data || [];
   },
-
-  // Create Incident
   async createIncident(incidentData) {
-    try {
-      const res = await fetch(`${BASE_URL}/incidents`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(incidentData),
-      });
-      if (!res.ok) throw new Error('Create failed');
-      const json = await res.json();
-      return json.data;
-    } catch {
-      // Fallback
-      return {
-        _id: `inc-${Date.now()}`,
-        ...incidentData,
-        createdAt: new Date().toISOString(),
-      };
-    }
+    return (await request('/incidents', { method: 'POST', body: incidentData })).data;
   },
-
-  // Update Incident Details (location, category, etc.)
   async updateIncident(id, incidentData) {
-    try {
-      const res = await fetch(`${BASE_URL}/incidents/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(incidentData),
-      });
-      if (!res.ok) throw new Error('Update failed');
-      const json = await res.json();
-      return json.data;
-    } catch (err) {
-      console.warn('[API] updateIncident fallback:', err.message);
-      return { _id: id, ...incidentData };
-    }
+    return (await request(`/incidents/${id}`, { method: 'PUT', body: incidentData })).data;
   },
-
-  // Update Incident Status
   async updateIncidentStatus(id, status, assignedTeam) {
-    try {
-      const res = await fetch(`${BASE_URL}/incidents/${id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, assignedTeam }),
-      });
-      if (!res.ok) throw new Error('Update failed');
-      const json = await res.json();
-      return json.data;
-    } catch {
-      return { id, status, assignedTeam };
-    }
+    return (await request(`/incidents/${id}/status`, { method: 'PATCH', body: { status, assignedTeam } })).data;
   },
 
-  // Officer Login
-  async login(email, password) {
-    try {
-      const res = await fetch(`${BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        return { success: false, error: json.error || 'Authentication failed' };
-      }
-      return { success: true, data: json.data };
-    } catch (err) {
-      // Fallback
-      return {
-        success: true,
-        data: {
-          _id: 'officer-01',
-          name: 'Tom Miller',
-          email,
-          role: 'municipal_officer',
-          wardAssigned: 'Amrita Campus - Ettimadai Ward',
-          organization: 'Amrita Civic & Infrastructure Authority',
-        },
-      };
-    }
+  // ---------------------------------------------------------------- work items (team managers + officer)
+  work: {
+    meta: async () => (await request('/work/meta')).data,
+    list: async (params = {}) => (await request(`/work${qs(params)}`)).data,
+    get: async (code) => (await request(`/work/${encodeURIComponent(code)}`)).data,
+    start: async (code) => (await request(`/work/${encodeURIComponent(code)}/start`, { method: 'POST' })).data,
+    resolve: async (code, note, afterPhoto) => {
+      const form = new FormData();
+      form.append('note', note);
+      if (afterPhoto) form.append('afterPhoto', afterPhoto);
+      return (await request(`/work/${encodeURIComponent(code)}/resolve`, { method: 'POST', form })).data;
+    },
+    requestReassign: async (code, reason, suggestedTeam) =>
+      (await request(`/work/${encodeURIComponent(code)}/request-reassign`, { method: 'POST', body: { reason, suggestedTeam } })).data,
+    requestNotDefect: async (code, reason) =>
+      (await request(`/work/${encodeURIComponent(code)}/request-not-defect`, { method: 'POST', body: { reason } })).data,
   },
+
+  // ---------------------------------------------------------------- municipal officer
+  municipal: {
+    board: async (team) => (await request(`/municipal/board${qs({ team })}`)).data,
+    triage: async (params = {}) => (await request(`/municipal/triage${qs(params)}`)).data,
+    triageAssign: async (code, team, category, reason) =>
+      (await request(`/municipal/triage/${encodeURIComponent(code)}/assign`, { method: 'POST', body: { team, category, reason } })).data,
+    triageReject: async (code, reason) =>
+      (await request(`/municipal/triage/${encodeURIComponent(code)}/reject`, { method: 'POST', body: { reason } })).data,
+    requests: async (params = {}) => (await request(`/municipal/requests${qs(params)}`)).data,
+    decide: async (code, requestId, approve, toTeam, note) =>
+      (await request(`/municipal/requests/${encodeURIComponent(code)}/${requestId}/decide`, { method: 'POST', body: { approve, toTeam, note } })).data,
+    reassign: async (code, toTeam, reason) =>
+      (await request(`/municipal/work/${encodeURIComponent(code)}/reassign`, { method: 'POST', body: { toTeam, reason } })).data,
+    reopen: async (code, reason) => (await request(`/municipal/work/${encodeURIComponent(code)}/reopen`, { method: 'POST', body: { reason } })).data,
+    reject: async (code, reason) => (await request(`/municipal/work/${encodeURIComponent(code)}/reject`, { method: 'POST', body: { reason } })).data,
+  },
+
+  // ---------------------------------------------------------------- analytics, badges, assistant
+  analytics: {
+    team: async (period = '7d', team) => (await request(`/analytics/team${qs({ period, team })}`)).data,
+    municipal: async (period = '7d') => (await request(`/analytics/municipal${qs({ period })}`)).data,
+  },
+  notifications: async () => (await request('/notifications/summary')).data,
+  chat: async (messages) => request('/chat', { method: 'POST', body: { messages } }),
 };

@@ -50,3 +50,13 @@ node_modules/
 **/tb/
 .ipynb_checkpoints/
 practice.ipynb
+
+# Local data backups made by backend/scripts/resetReports.js
+backups/
+
+# Lab Evaluation 2 (kept local, not pushed)
+lab-2/
+civicscan-model/data_pipeline/export_lab_eval.py
+
+# Local editor/agent launch settings (machine-specific paths)
+.claude/launch.json

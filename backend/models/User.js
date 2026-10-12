@@ -1,5 +1,14 @@
 const mongoose = require('mongoose');
 
+/**
+ * Staff accounts only. Citizens never log in (they track reports by ID).
+ *
+ *   team_manager       manages one team's work queue: team = 'litter' | 'roads'
+ *   municipal_officer  sees and manages everything (team = null)
+ *
+ * Older records may still hold 'field_supervisor', 'admin' or 'citizen'; the auth layer
+ * maps them (see middlewares/auth.js) and the migration script rewrites them.
+ */
 const UserSchema = new mongoose.Schema(
   {
     name: {
@@ -14,26 +23,39 @@ const UserSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    // bcrypt hash. `password` is the legacy plaintext field, cleared by the migration.
+    passwordHash: {
+      type: String,
+    },
     password: {
       type: String,
-      required: true,
+      select: false,
     },
     role: {
       type: String,
-      enum: ['municipal_officer', 'field_supervisor', 'citizen', 'admin'],
-      default: 'municipal_officer',
+      enum: ['team_manager', 'municipal_officer', 'field_supervisor', 'citizen', 'admin'],
+      default: 'team_manager',
     },
+    team: {
+      type: String,
+      enum: ['litter', 'roads', null],
+      default: null,
+    },
+    active: {
+      type: Boolean,
+      default: true,
+    },
+    lastLoginAt: Date,
     wardAssigned: {
       type: String,
-      default: 'Ward 7 - Central Urban',
+      default: 'Ettimadai Ward',
     },
     organization: {
       type: String,
-      default: 'Metropolitan Civic Authority',
+      default: 'Amrita Civic & Infrastructure Authority',
     },
     avatarUrl: {
       type: String,
-      default: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
     },
   },
   {
