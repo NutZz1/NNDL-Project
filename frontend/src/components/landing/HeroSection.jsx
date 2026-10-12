@@ -103,15 +103,14 @@ export default function HeroSection({ onNavigate, onOpenLogin }) {
 
           <p
             style={{
-              fontSize: '1.12rem',
+              fontSize: '1.05rem',
               color: '#475569',
-              lineHeight: 1.65,
+              lineHeight: 1.6,
               marginBottom: '32px',
-              maxWidth: '560px',
+              maxWidth: '480px',
             }}
           >
-            CivicScan transforms street-level vehicle imagery and geotagged citizen photos into
-            real-time actionable repair orders for road cracks, potholes, street litter, and hazardous open manholes.
+            AI-powered detection of road defects and civic waste from geotagged street photos.
           </p>
 
           {/* Action Buttons */}
@@ -141,10 +140,7 @@ export default function HeroSection({ onNavigate, onOpenLogin }) {
             </button>
 
             <button
-              onClick={() => {
-                const el = document.getElementById('how-it-works');
-                if (el) el.scrollIntoView({ behavior: 'smooth' });
-              }}
+              onClick={() => onNavigate('dashboard')}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -160,57 +156,15 @@ export default function HeroSection({ onNavigate, onOpenLogin }) {
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
               }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.borderColor = '#059669';
-                e.currentTarget.style.color = '#059669';
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.borderColor = '#cbd5e1';
-                e.currentTarget.style.color = '#0f172a';
-              }}
-            >
-              <span>See How It Operates</span>
-              <ArrowRight size={17} />
-            </button>
-
-            <button
-              onClick={() => onNavigate('dashboard')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '14px 20px',
-                borderRadius: '10px',
-                background: '#f8fafc',
-                color: '#475569',
-                border: '1px solid #e2e8f0',
-                fontSize: '0.94rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-              onMouseOver={(e) => (e.currentTarget.style.color = '#059669')}
-              onMouseOut={(e) => (e.currentTarget.style.color = '#475569')}
+              onMouseOver={(e) => { e.currentTarget.style.borderColor = '#059669'; e.currentTarget.style.color = '#059669'; }}
+              onMouseOut={(e) => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.color = '#0f172a'; }}
             >
               <span>Explore Dashboard</span>
+              <ArrowRight size={17} />
             </button>
           </div>
 
-          {/* Feature Highlights */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', color: '#334155', fontSize: '0.88rem', fontWeight: 600 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <CheckCircle2 size={18} color="#059669" />
-              <span>Automatic EXIF Geolocation</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <CheckCircle2 size={18} color="#059669" />
-              <span>RF-DETR 8 Locked Classes</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <CheckCircle2 size={18} color="#059669" />
-              <span>Spatial Waste Clustering</span>
-            </div>
-          </div>
+
         </div>
 
         {/* Right Column: Interactive Visual Showcase Card */}

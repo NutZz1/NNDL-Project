@@ -1,9 +1,10 @@
 import React from 'react';
 import Navbar from '../components/common/Navbar';
 import Footer from '../components/common/Footer';
-import HeroSection from '../components/landing/HeroSection';
-import SdgSection from '../components/landing/SdgSection';
+import AboutSection from '../components/landing/AboutSection';
 import HowItWorksSection from '../components/landing/HowItWorksSection';
+import DetectionClassesSection from '../components/landing/DetectionClassesSection';
+import SdgSection from '../components/landing/SdgSection';
 
 export default function LandingPage({ onNavigate, onOpenLogin, isLoggedIn }) {
   return (
@@ -15,9 +16,9 @@ export default function LandingPage({ onNavigate, onOpenLogin, isLoggedIn }) {
         isLoggedIn={isLoggedIn}
       />
       <main style={{ flex: 1 }}>
-        <HeroSection onNavigate={onNavigate} onOpenLogin={onOpenLogin} />
-        {/* Core Narrative: 4-Stage Operating Pipeline (Upload -> GPS -> Neural Inference -> Dashboard) */}
-        <HowItWorksSection onNavigate={onNavigate} />
+        <AboutSection onNavigate={onNavigate} />
+        <HowItWorksSection />
+        <DetectionClassesSection />
         {/* Project Aim & UN SDG Alignment */}
         <SdgSection />
       </main>

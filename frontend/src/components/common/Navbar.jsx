@@ -127,38 +127,17 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
           style={{
             display: 'none',
             alignItems: 'center',
-            gap: '28px',
+            gap: '24px',
           }}
           className="desktop-nav"
         >
           <button
-            onClick={() => onNavigate('upload')}
+            onClick={() => handleNavClick('about')}
             style={{
-              fontSize: '0.92rem',
-              fontWeight: 700,
-              color: currentPage === 'upload' ? '#059669' : '#0f172a',
-              padding: '6px 4px',
-              borderBottom: currentPage === 'upload' ? '2px solid #059669' : '2px solid transparent',
-              transition: 'all 0.2s',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: 'none',
-              cursor: 'pointer',
-            }}
-            onMouseOver={(e) => (e.currentTarget.style.color = '#059669')}
-            onMouseOut={(e) => (e.currentTarget.style.color = currentPage === 'upload' ? '#059669' : '#0f172a')}
-          >
-            <UploadCloud size={16} color="#059669" />
-            <span>Upload Street Photo</span>
-          </button>
-          <button
-            onClick={() => handleNavClick('how-it-works')}
-            style={{
-              fontSize: '0.92rem',
+              fontSize: '0.9rem',
               fontWeight: 600,
               color: '#334155',
-              padding: '6px 4px',
+              padding: '6px 2px',
               borderBottom: '2px solid transparent',
               transition: 'all 0.2s',
               background: 'none',
@@ -167,15 +146,16 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
             onMouseOver={(e) => (e.target.style.color = '#059669')}
             onMouseOut={(e) => (e.target.style.color = '#334155')}
           >
-            How CivicScan Operates
+            About
           </button>
           <button
-            onClick={() => handleNavClick('aim-sdg')}
+            onClick={() => handleNavClick('how-it-works')}
             style={{
-              fontSize: '0.92rem',
+              fontSize: '0.9rem',
               fontWeight: 600,
               color: '#334155',
-              padding: '6px 4px',
+              padding: '6px 2px',
+              borderBottom: '2px solid transparent',
               transition: 'all 0.2s',
               background: 'none',
               cursor: 'pointer',
@@ -183,7 +163,41 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
             onMouseOver={(e) => (e.target.style.color = '#059669')}
             onMouseOut={(e) => (e.target.style.color = '#334155')}
           >
-            Aim & SDGs
+            How It Works
+          </button>
+          <button
+            onClick={() => handleNavClick('detection-classes')}
+            style={{
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              color: '#334155',
+              padding: '6px 2px',
+              borderBottom: '2px solid transparent',
+              transition: 'all 0.2s',
+              background: 'none',
+              cursor: 'pointer',
+            }}
+            onMouseOver={(e) => (e.target.style.color = '#059669')}
+            onMouseOut={(e) => (e.target.style.color = '#334155')}
+          >
+            Detection Classes
+          </button>
+          <button
+            onClick={() => handleNavClick('aim-sdg')}
+            style={{
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              color: '#334155',
+              padding: '6px 2px',
+              borderBottom: '2px solid transparent',
+              transition: 'all 0.2s',
+              background: 'none',
+              cursor: 'pointer',
+            }}
+            onMouseOver={(e) => (e.target.style.color = '#059669')}
+            onMouseOut={(e) => (e.target.style.color = '#334155')}
+          >
+            UN SDGs
           </button>
         </nav>
 
@@ -319,23 +333,35 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
             <span>Upload Street Photo</span>
           </button>
           <button
-            onClick={() => handleNavClick('how-it-works')}
-            style={{ textAlign: 'left', padding: '8px 0', fontSize: '1rem', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}
+            onClick={() => handleNavClick('about')}
+            style={{ textAlign: 'left', padding: '8px 0', fontSize: '1rem', fontWeight: 600, color: '#1e293b', background: 'none', border: 'none', cursor: 'pointer' }}
           >
-            How CivicScan Operates
+            About
+          </button>
+          <button
+            onClick={() => handleNavClick('how-it-works')}
+            style={{ textAlign: 'left', padding: '8px 0', fontSize: '1rem', fontWeight: 600, color: '#1e293b', background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            How It Works
+          </button>
+          <button
+            onClick={() => handleNavClick('detection-classes')}
+            style={{ textAlign: 'left', padding: '8px 0', fontSize: '1rem', fontWeight: 600, color: '#1e293b', background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            Detection Classes
           </button>
           <button
             onClick={() => handleNavClick('aim-sdg')}
-            style={{ textAlign: 'left', padding: '8px 0', fontSize: '1rem', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}
+            style={{ textAlign: 'left', padding: '8px 0', fontSize: '1rem', fontWeight: 600, color: '#1e293b', background: 'none', border: 'none', cursor: 'pointer' }}
           >
-            Aim & SDGs
+            UN SDGs
           </button>
         </div>
       )}
 
       {/* Responsive Inline Media Query Style */}
       <style>{`
-        @media (min-width: 768px) {
+        @media (min-width: 900px) {
           .navbar-inner {
             display: grid !important;
             grid-template-columns: 1fr auto 1fr !important;
@@ -346,7 +372,7 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
           }
           .mobile-toggle { display: none !important; }
         }
-        @media (max-width: 767px) {
+        @media (max-width: 899px) {
           .desktop-nav { display: none !important; }
           .mobile-toggle { display: flex !important; }
         }

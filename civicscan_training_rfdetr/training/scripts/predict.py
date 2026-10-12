@@ -7,6 +7,12 @@ No valid_categories masking at inference: every class is a candidate on a
 photo of unknown origin. The confidence threshold matters — sigmoid-focal
 DETR scores are low (a well-trained detection is typically 0.3-0.7), so
 0.3 is a reasonable default; 0.5 is strict.
+
+Per-class thresholds (--class-conf litter=0.5) raise the bar for a class that
+over-triggers: on field photos `litter` fires on any grey textured object
+(concrete slabs, gravel in potholes), so a stricter litter cut lets the
+hazard classes win the box. This is the same rule the deployment pipeline's
+priority-scoring stage applies.
 """
 
 import argparse
@@ -43,7 +49,7 @@ def load_model(ckpt_path):
 
 
 @torch.no_grad()
-def predict(model, cfg, img, device, conf):
+def predict(model, cfg, img, device, conf, class_conf=None):
     res = cfg["resolution"]
     tf = build_transforms(res, train=False)
     target = {"boxes": torch.zeros(0, 4), "labels": torch.zeros(0, dtype=torch.long),
@@ -58,7 +64,10 @@ def predict(model, cfg, img, device, conf):
     r = postprocess(cfg["model"], out, [target], target["valid_mask"].unsqueeze(0).to(device),
                     res, score_thresh=0.001, max_det=cfg.get("max_det", 300),
                     nms_iou=cfg.get("nms_iou", 0.7), apply_mask=False)[0]
-    keep = r["scores"] >= conf
+    thr = torch.full((NUM_CLASSES,), conf)
+    for name, v in (class_conf or {}).items():
+        thr[CLASS_NAMES.index(name)] = v
+    keep = r["scores"] >= thr[r["labels"]]
     return [(CLASS_NAMES[int(l)], float(s), b.tolist())
             for l, s, b in zip(r["labels"][keep], r["scores"][keep], r["boxes"][keep])]
 
@@ -94,18 +103,28 @@ def main():
     p.add_argument("images", nargs="+")
     p.add_argument("--ckpt", required=True)
     p.add_argument("--conf", type=float, default=0.3)
+    p.add_argument("--class-conf", action="append", default=[], metavar="CLASS=THR",
+                   help="per-class threshold override, e.g. litter=0.5 (repeatable)")
     p.add_argument("--out", default="predictions")
     p.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu")
     a = p.parse_args()
 
+    class_conf = {}
+    for item in a.class_conf:
+        name, v = item.split("=")
+        if name not in CLASS_NAMES:
+            sys.exit(f"--class-conf: unknown class '{name}' (choose from {CLASS_NAMES})")
+        class_conf[name] = float(v)
+
     model, cfg, epoch = load_model(a.ckpt)
     model.to(a.device)
     print(f"{cfg['model']} {cfg.get('variant', '')} @ {cfg['resolution']} px, epoch {epoch}")
+    print(f"threshold {a.conf}" + (f", per-class {class_conf}" if class_conf else ""))
     os.makedirs(a.out, exist_ok=True)
 
     for path in a.images:
         img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
-        dets = predict(model, cfg, img, a.device, a.conf)
+        dets = predict(model, cfg, img, a.device, a.conf, class_conf)
         low = predict(model, cfg, img, a.device, 0.1) if not dets else []
         print(f"\n{os.path.basename(path)}  ({img.width}x{img.height})")
         if dets:

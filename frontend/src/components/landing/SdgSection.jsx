@@ -9,8 +9,7 @@ export default function SdgSection() {
       color: '#d97706',
       bgColor: '#fef3c7',
       icon: <Building2 size={22} />,
-      goal: 'Making cities inclusive, safe, and resilient.',
-      role: 'Automates detection of potholes and road hazards to help municipalities maintain safe, functional roadways for everyone.',
+      role: 'Detects potholes and road hazards for safer municipalities.',
     },
     {
       number: '12',
@@ -18,8 +17,7 @@ export default function SdgSection() {
       color: '#ea580c',
       bgColor: '#ffedd5',
       icon: <Recycle size={22} />,
-      goal: 'Encouraging sustainable municipal waste handling.',
-      role: 'Pinpoints street litter and localized waste accumulation so municipal cleaning teams can be dispatched effectively.',
+      role: 'Pinpoints street litter for efficient municipal dispatch.',
     },
     {
       number: '13',
@@ -27,8 +25,7 @@ export default function SdgSection() {
       color: '#059669',
       bgColor: '#d1fae5',
       icon: <CloudRain size={22} />,
-      goal: 'Strengthening urban resilience against weather impacts.',
-      role: 'Identifies debris near curb gutters and drainage channels, helping prevent waterlogging and urban flooding during rainfall.',
+      role: 'Flags drainage debris to prevent urban flooding.',
     },
     {
       number: '3',
@@ -36,8 +33,7 @@ export default function SdgSection() {
       color: '#16a34a',
       bgColor: '#dcfce7',
       icon: <HeartPulse size={22} />,
-      goal: 'Protecting citizen health and public safety.',
-      role: 'Flags hazardous missing manhole lids and road craters early, preventing vehicular crashes and pedestrian injuries.',
+      role: 'Detects open manholes early to prevent pedestrian injuries.',
     },
   ];
 
@@ -45,14 +41,14 @@ export default function SdgSection() {
     <section
       id="aim-sdg"
       style={{
-        padding: '80px 24px',
+        padding: '64px 24px',
         background: '#f8fafc',
         borderBottom: '1px solid #e2e8f0',
       }}
     >
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-        {/* Project Aim Header */}
-        <div style={{ textAlign: 'center', maxWidth: '720px', margin: '0 auto 48px' }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: '40px' }}>
           <div
             style={{
               display: 'inline-flex',
@@ -64,7 +60,7 @@ export default function SdgSection() {
               color: '#059669',
               fontSize: '0.8rem',
               fontWeight: 700,
-              marginBottom: '14px',
+              marginBottom: '12px',
               textTransform: 'uppercase',
               letterSpacing: '0.04em',
             }}
@@ -76,19 +72,18 @@ export default function SdgSection() {
           <h2
             style={{
               fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(1.8rem, 3vw, 2.3rem)',
+              fontSize: 'clamp(1.6rem, 3vw, 2.1rem)',
               fontWeight: 800,
               color: '#0f172a',
               lineHeight: 1.25,
-              marginBottom: '16px',
               letterSpacing: '-0.02em',
+              marginBottom: '10px',
             }}
           >
-            Project Aim & UN SDG Alignment
+            UN SDG Alignment
           </h2>
-
-          <p style={{ fontSize: '1.02rem', color: '#475569', lineHeight: 1.65 }}>
-            The objective of <strong>CivicScan</strong> is to apply deep learning computer vision and GPS-tagged imagery to automatically detect civic infrastructure defects and street litter. This enables faster reporting, clearer spatial tracking, and proactive public maintenance.
+          <p style={{ fontSize: '0.95rem', color: '#64748b' }}>
+            Deep learning + GPS imagery to detect civic defects and waste.
           </p>
         </div>
 
@@ -96,8 +91,8 @@ export default function SdgSection() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-            gap: '20px',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '16px',
           }}
         >
           {sdgs.map((sdg) => (
@@ -106,113 +101,58 @@ export default function SdgSection() {
               style={{
                 background: '#ffffff',
                 borderRadius: '14px',
-                padding: '24px',
+                padding: '20px',
                 border: '1px solid #e2e8f0',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
                 transition: 'all 0.2s ease',
               }}
               onMouseOver={(e) => {
                 e.currentTarget.style.transform = 'translateY(-3px)';
                 e.currentTarget.style.borderColor = sdg.color;
-                e.currentTarget.style.boxShadow = '0 8px 20px rgba(0, 0, 0, 0.06)';
+                e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.06)';
               }}
               onMouseOut={(e) => {
                 e.currentTarget.style.transform = 'translateY(0)';
                 e.currentTarget.style.borderColor = '#e2e8f0';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.04)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.04)';
               }}
             >
-              <div>
-                {/* Top Badge & Icon */}
+              {/* Icon + Badge */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
                 <div
                   style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '10px',
+                    background: sdg.bgColor,
+                    color: sdg.color,
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: '16px',
+                    justifyContent: 'center',
                   }}
                 >
-                  <div
-                    style={{
-                      width: '42px',
-                      height: '42px',
-                      borderRadius: '10px',
-                      background: sdg.bgColor,
-                      color: sdg.color,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    {sdg.icon}
-                  </div>
-                  <span
-                    style={{
-                      fontSize: '0.82rem',
-                      fontWeight: 700,
-                      color: sdg.color,
-                      background: sdg.bgColor,
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                    }}
-                  >
-                    SDG {sdg.number}
-                  </span>
+                  {sdg.icon}
                 </div>
-
-                <h3
-                  style={{
-                    fontSize: '1.05rem',
-                    fontWeight: 700,
-                    color: '#0f172a',
-                    marginBottom: '8px',
-                  }}
-                >
-                  {sdg.title}
-                </h3>
-
-                <p
-                  style={{
-                    fontSize: '0.85rem',
-                    color: '#64748b',
-                    marginBottom: '16px',
-                    lineHeight: 1.45,
-                    fontStyle: 'italic',
-                  }}
-                >
-                  "{sdg.goal}"
-                </p>
-              </div>
-
-              {/* CivicScan Role */}
-              <div
-                style={{
-                  background: '#f8fafc',
-                  borderLeft: `3px solid ${sdg.color}`,
-                  padding: '10px 12px',
-                  borderRadius: '0 8px 8px 0',
-                }}
-              >
                 <span
                   style={{
-                    display: 'block',
-                    fontSize: '0.72rem',
+                    fontSize: '0.78rem',
                     fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                    color: '#64748b',
-                    marginBottom: '3px',
+                    color: sdg.color,
+                    background: sdg.bgColor,
+                    padding: '3px 9px',
+                    borderRadius: '6px',
                   }}
                 >
-                  CivicScan Focus
+                  SDG {sdg.number}
                 </span>
-                <p style={{ fontSize: '0.83rem', color: '#334155', lineHeight: 1.5, margin: 0 }}>
-                  {sdg.role}
-                </p>
               </div>
+
+              <h3 style={{ fontSize: '0.97rem', fontWeight: 700, color: '#0f172a', marginBottom: '6px' }}>
+                {sdg.title}
+              </h3>
+              <p style={{ fontSize: '0.83rem', color: '#64748b', lineHeight: 1.5, margin: 0 }}>
+                {sdg.role}
+              </p>
             </div>
           ))}
         </div>
@@ -220,4 +160,3 @@ export default function SdgSection() {
     </section>
   );
 }
-

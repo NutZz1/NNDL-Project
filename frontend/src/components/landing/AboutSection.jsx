@@ -1,307 +1,187 @@
-import React, { useState } from 'react';
-import { Layers, AlertTriangle, Trash2, Activity, ShieldAlert, Sparkles } from 'lucide-react';
-import { CIVIC_CLASSES } from '../../services/mockData';
+import React, { useState, useEffect } from 'react';
+import { UploadCloud, ArrowRight } from 'lucide-react';
 
-export default function AboutSection() {
-  const [selectedDomain, setSelectedDomain] = useState('all');
+export default function AboutSection({ onNavigate }) {
+  const [slideIndex, setSlideIndex] = useState(0);
 
-  const filteredClasses =
-    selectedDomain === 'all'
-      ? CIVIC_CLASSES
-      : CIVIC_CLASSES.filter((c) => c.domain === selectedDomain);
+  const slides = [
+    '/slide_litter.jpg',
+    '/slide_pothole.jpg',
+    '/slide_manhole.jpg',
+    '/slide_crack.jpg',
+  ];
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSlideIndex((prev) => (prev + 1) % slides.length);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [slides.length]);
 
   return (
     <section
       id="about"
       style={{
-        padding: '96px 24px',
-        background: '#ffffff',
-        borderBottom: '1px solid #e2e8f0',
+        position: 'relative',
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        borderBottom: '1px solid #1e3a2f',
       }}
     >
-      <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
-        {/* Section Header */}
-        <div style={{ textAlign: 'center', maxWidth: '780px', margin: '0 auto 60px' }}>
-          <div
+      {/* Sliding background images */}
+      {slides.map((src, i) => (
+        <div
+          key={src}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundImage: `url("${src}")`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: i === slideIndex ? 1 : 0,
+            transition: 'opacity 1.2s ease-in-out',
+            zIndex: 0,
+          }}
+        />
+      ))}
+
+      {/* Dark overlay */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'rgba(5, 18, 10, 0.72)',
+        zIndex: 1,
+      }} />
+
+      {/* Centered content */}
+      <div
+        style={{
+          position: 'relative',
+          zIndex: 2,
+          textAlign: 'center',
+          maxWidth: '680px',
+          padding: '0 24px',
+        }}
+      >
+
+
+        {/* Headline */}
+        <h1
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 'clamp(2.6rem, 5vw, 4rem)',
+            fontWeight: 800,
+            lineHeight: 1.1,
+            color: '#ffffff',
+            letterSpacing: '-0.03em',
+            marginBottom: '20px',
+          }}
+        >
+          Detecting Urban Decay &amp; Civic Waste with{' '}
+          <span
+            style={{
+              background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}
+          >
+            Deep Vision
+          </span>
+        </h1>
+
+        {/* Subtitle */}
+        <p
+          style={{
+            fontSize: '1.1rem',
+            color: '#94a3b8',
+            lineHeight: 1.65,
+            marginBottom: '36px',
+          }}
+        >
+          AI-powered detection of road defects and civic waste from geotagged street photos.
+        </p>
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => onNavigate && onNavigate('upload')}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '6px',
-              padding: '4px 12px',
-              borderRadius: '9999px',
-              background: '#e6f7ef',
-              color: '#059669',
-              fontSize: '0.8rem',
+              gap: '9px',
+              padding: '14px 28px',
+              borderRadius: '10px',
+              background: '#059669',
+              color: '#ffffff',
+              fontSize: '1rem',
               fontWeight: 700,
-              marginBottom: '16px',
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
+              border: 'none',
+              cursor: 'pointer',
+              boxShadow: '0 4px 20px rgba(5,150,105,0.45)',
+              transition: 'all 0.2s ease',
             }}
+            onMouseOver={(e) => (e.currentTarget.style.background = '#047857')}
+            onMouseOut={(e) => (e.currentTarget.style.background = '#059669')}
           >
-            <Layers size={15} />
-            <span>Section 1 • About the Product</span>
-          </div>
+            <UploadCloud size={20} />
+            Upload Street Photo
+          </button>
 
-          <h2
+          <button
+            onClick={() => onNavigate && onNavigate('dashboard')}
             style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(2rem, 3.5vw, 2.75rem)',
-              fontWeight: 800,
-              color: '#0f172a',
-              lineHeight: 1.2,
-              marginBottom: '18px',
-              letterSpacing: '-0.02em',
-            }}
-          >
-            Autonomous Civic Health Auditing for Modern Municipalities
-          </h2>
-
-          <p style={{ fontSize: '1.05rem', color: '#64748b', lineHeight: 1.7 }}>
-            Traditional municipal maintenance relies on slow, irregular citizen complaints that take weeks
-            to catalog. <strong>CivicScan</strong> continuously parses visual feeds from patrol vehicles,
-            municipal street sweepers, and citizen smartphones to autonomously spot road decay and hazardous
-            litter before they cause accidents or flash flooding.
-          </p>
-        </div>
-
-        {/* 3 Core Value Pillars */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '28px',
-            marginBottom: '64px',
-          }}
-        >
-          <div
-            style={{
-              background: '#f8fafc',
-              borderRadius: '16px',
-              padding: '32px 24px',
-              border: '1px solid #e2e8f0',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.transform = 'translateY(-4px)';
-              e.currentTarget.style.boxShadow = '0 12px 24px -10px rgba(5, 150, 105, 0.15)';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = 'none';
-            }}
-          >
-            <div
-              style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '12px',
-                background: '#e6f7ef',
-                color: '#059669',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '20px',
-              }}
-            >
-              <Trash2 size={24} />
-            </div>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#0f172a', marginBottom: '10px' }}>
-              Civic Waste & Litter Detection
-            </h3>
-            <p style={{ color: '#64748b', fontSize: '0.92rem', lineHeight: 1.6 }}>
-              Detects street plastic, trash accumulation, and applies downstream spatial clustering
-              to flag illegal commercial dumping sites automatically.
-            </p>
-          </div>
-
-          <div
-            style={{
-              background: '#f8fafc',
-              borderRadius: '16px',
-              padding: '32px 24px',
-              border: '1px solid #e2e8f0',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.transform = 'translateY(-4px)';
-              e.currentTarget.style.boxShadow = '0 12px 24px -10px rgba(5, 150, 105, 0.15)';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = 'none';
-            }}
-          >
-            <div
-              style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '12px',
-                background: '#eff6ff',
-                color: '#2563eb',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '20px',
-              }}
-            >
-              <Activity size={24} />
-            </div>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#0f172a', marginBottom: '10px' }}>
-              Road & Structural Decay
-            </h3>
-            <p style={{ color: '#64748b', fontSize: '0.92rem', lineHeight: 1.6 }}>
-              Identifies potholes, longitudinal, transverse, and alligator fatigue cracking on roads,
-              as well as critical structural cracks on bridges and public buildings.
-            </p>
-          </div>
-
-          <div
-            style={{
-              background: '#f8fafc',
-              borderRadius: '16px',
-              padding: '32px 24px',
-              border: '1px solid #e2e8f0',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.transform = 'translateY(-4px)';
-              e.currentTarget.style.boxShadow = '0 12px 24px -10px rgba(5, 150, 105, 0.15)';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = 'none';
-            }}
-          >
-            <div
-              style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '12px',
-                background: '#fef2f2',
-                color: '#dc2626',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '20px',
-              }}
-            >
-              <ShieldAlert size={24} />
-            </div>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#0f172a', marginBottom: '10px' }}>
-              High-Risk Hazard Prevention
-            </h3>
-            <p style={{ color: '#64748b', fontSize: '0.92rem', lineHeight: 1.6 }}>
-              Damaged or missing manhole covers are recognized instantly, generating high-priority red alerts
-              to avoid catastrophic pedestrian falls and vehicle axle breakdowns.
-            </p>
-          </div>
-        </div>
-
-        {/* 8 Locked Detection Classes Interactive Explorer */}
-        <div
-          style={{
-            background: '#ffffff',
-            borderRadius: '20px',
-            border: '1px solid #e2e8f0',
-            padding: '36px 32px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
+              display: 'inline-flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '16px',
-              marginBottom: '28px',
+              gap: '8px',
+              padding: '14px 24px',
+              borderRadius: '10px',
+              background: 'rgba(255,255,255,0.1)',
+              color: '#f1f5f9',
+              fontSize: '1rem',
+              fontWeight: 600,
+              border: '1px solid rgba(255,255,255,0.2)',
+              cursor: 'pointer',
+              backdropFilter: 'blur(8px)',
+              transition: 'all 0.2s ease',
             }}
+            onMouseOver={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.18)')}
+            onMouseOut={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.1)')}
           >
-            <div>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a' }}>
-                CivicScan's 8 Locked Computer Vision Classes
-              </h3>
-              <p style={{ fontSize: '0.88rem', color: '#64748b' }}>
-                Unified across 8 public street-view datasets with strict domain boundaries.
-              </p>
-            </div>
-
-            {/* Filter Domain Tabs */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {[
-                { id: 'all', label: 'All 8 Classes' },
-                { id: 'road_damage', label: 'Road Damage' },
-                { id: 'civic_waste', label: 'Civic Waste' },
-                { id: 'structural_damage', label: 'Structural' },
-                { id: 'hazard', label: 'Hazards' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setSelectedDomain(tab.id)}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                    background: selectedDomain === tab.id ? '#059669' : '#f1f5f9',
-                    color: selectedDomain === tab.id ? '#ffffff' : '#475569',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
-              gap: '16px',
-            }}
-          >
-            {filteredClasses.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '12px',
-                  padding: '16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                }}
-              >
-                <div
-                  style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    background: `${item.color}15`,
-                    color: item.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 800,
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  {item.id}
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>
-                    {item.label}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'capitalize' }}>
-                    Domain: {item.domain.replace('_', ' ')}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+            Explore Dashboard
+            <ArrowRight size={17} />
+          </button>
         </div>
+      </div>
+
+      {/* Slide dot indicators */}
+      <div style={{
+        position: 'absolute',
+        bottom: '28px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        gap: '8px',
+        zIndex: 3,
+      }}>
+        {slides.map((_, i) => (
+          <button
+            key={i}
+            onClick={() => setSlideIndex(i)}
+            style={{
+              width: i === slideIndex ? '24px' : '8px',
+              height: '8px',
+              borderRadius: '4px',
+              background: i === slideIndex ? '#10b981' : 'rgba(255,255,255,0.3)',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              transition: 'all 0.3s ease',
+            }}
+          />
+        ))}
       </div>
     </section>
   );
