@@ -1,0 +1,21 @@
+inherit: base.yaml
+model: rfdetr
+
+pretrained: true              # DINOv2 SSL weights, fetched from torch.hub
+freeze_backbone_blocks: 0
+aux_loss: true
+
+optimizer: adamw
+lr: 0.0001
+backbone_lr: 0.000015
+weight_decay: 0.0001
+epochs: 60
+
+# Hungarian matcher costs
+cost_class: 2.0
+cost_bbox: 5.0
+cost_giou: 2.0
+# loss weights
+w_class: 2.0
+w_bbox: 5.0
+w_giou: 2.0
