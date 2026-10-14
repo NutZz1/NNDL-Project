@@ -9,6 +9,7 @@
  * because the scope is enforced by the tools, not by the model.
  */
 const path = require('path');
+const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
@@ -99,6 +100,12 @@ const check = (name, cond, extra = '') => {
   check('legacy incidents API needs login', (await request(app).get('/api/incidents')).status === 401);
   check('manager cannot use the legacy create route', (await request(app).post('/api/incidents').set(as('road')).send({})).status === 403);
   check('photos are not public without a signed link', (await request(app).get('/uploads/test.jpg')).status === 403);
+  check('model comparison needs login', (await request(app).get('/api/municipal/comparison')).status === 401);
+  check('manager cannot open model comparison', (await request(app).get('/api/municipal/comparison').set(as('road'))).status === 403);
+  check('manager cannot run the comparison models', (await request(app).post('/api/municipal/comparison/upload').set(as('litter'))).status === 403);
+  check('public compare endpoints are gone', (await request(app).post('/api/upload/compare-models')).status === 404 && (await request(app).get('/api/upload/models')).status === 404);
+  const cmp = await request(app).get('/api/municipal/comparison').set(as('officer'));
+  check('officer lists reports for comparison', cmp.status === 200 && Array.isArray(cmp.body.data));
 
   console.log('\nPhase 1: team scope');
   const lList = await request(app).get('/api/work?status=all').set(as('litter'));
@@ -192,6 +199,20 @@ const check = (name, cond, extra = '') => {
   check('team_stats as litter ignores team=roads', st.team === 'litter');
   const sys = ChatAgent.systemFor({ name: 'Litter Manager' }, litterScope);
   check('system prompt states the scope', /only help with litter work/i.test(sys));
+
+  // ---------------------------------------------------------------- database down
+  console.log('\nPhase 7: database unavailable');
+  check('health reports the database as connected', (await request(app).get('/api/health')).body.database === 'connected');
+  const uploadsDir = path.join(__dirname, '..', 'uploads');
+  const filesBefore = fs.existsSync(uploadsDir) ? fs.readdirSync(uploadsDir).length : 0;
+  await mongoose.disconnect();
+  const refused = await request(app)
+    .post('/api/upload/process-image')
+    .field('email', 'demo@civicscan.local')
+    .attach('image', Buffer.from([0xff, 0xd8, 0xff, 0xd9]), { filename: 'db-down-test.jpg', contentType: 'image/jpeg' });
+  check('upload with the database down is refused (503), not faked', refused.status === 503 && refused.body.code === 'DB_UNAVAILABLE' && !refused.body.data);
+  check('refused upload leaves no file behind', (fs.existsSync(uploadsDir) ? fs.readdirSync(uploadsDir).length : 0) === filesBefore);
+  check('health reports the database as disconnected', (await request(app).get('/api/health')).body.database === 'disconnected');
 
   console.log(`\n${passed} passed, ${failed} failed`);
   await mongoose.disconnect();

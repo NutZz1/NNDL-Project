@@ -4,7 +4,7 @@ import heic2any from 'heic2any';
 import { api } from '../../services/api';
 import { readFileAsDataUrl, resolveImageUrl, getCategoryFallback } from '../../services/imageService';
 
-export default function ImageDropzone({ onImageProcessed, email = '', disabled = false, model = 'rfdetr' }) {
+export default function ImageDropzone({ onImageProcessed, email = '', disabled = false, enhance = false }) {
   const fileInputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -37,13 +37,13 @@ export default function ImageDropzone({ onImageProcessed, email = '', disabled =
         previewUrl = dataUrl || URL.createObjectURL(displayableFile);
       }
 
-      // 2. Call backend for real model inference (the selected detector), EXIF extraction, and DB storage
+      // 2. Call backend for real model inference (RF-DETR), EXIF extraction, and DB storage
       try {
-        const serverRes = await api.uploadAndAnalyzeImage(file, {}, email, model);
+        const serverRes = await api.uploadAndAnalyzeImage(file, {}, email, { enhance });
         if (serverRes) {
           const ai = serverRes.aiDetection || {};
           const meta = serverRes.metadata || {};
-          const modelInfo = { modelName: ai.model || '', modelKey: ai.modelKey || model, inferenceMs: ai.inferenceMs, device: ai.device };
+          const modelInfo = { modelName: ai.model || '', modelKey: ai.modelKey || 'rfdetr', inferenceMs: ai.inferenceMs, device: ai.device };
 
           // Resolve the server-converted JPEG image URL
           const backendImgUrl = serverRes.imageUrl
@@ -115,6 +115,10 @@ export default function ImageDropzone({ onImageProcessed, email = '', disabled =
             reportCode: serverRes.reportCode || savedIncident?.reportCode || null,
             emailInfo: serverRes.email || null,
             aiReview: serverRes.aiReview || null,
+            // Present only when the citizen asked for GAN enhancement
+            gan: serverRes.gan
+              ? { ...serverRes.gan, restoredImageUrl: serverRes.gan.restoredImageUrl ? resolveImageUrl(serverRes.gan.restoredImageUrl, ai.category) : null }
+              : null,
           });
           return;
         }

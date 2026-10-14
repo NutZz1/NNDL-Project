@@ -4,6 +4,8 @@ const upload = require('../middlewares/uploadMiddleware');
 const work = require('../controllers/workController');
 const municipal = require('../controllers/municipalController');
 const analytics = require('../controllers/analyticsController');
+const uploads = require('../controllers/uploadController');
+const rateLimit = require('../middlewares/rateLimit');
 
 // Team managers and the Municipal Officer. The team scope comes from the login (req.scope).
 const workRouter = express.Router();
@@ -28,6 +30,13 @@ municipalRouter.post('/requests/:code/:requestId/decide', municipal.decide);
 municipalRouter.post('/work/:code/reassign', municipal.reassign);
 municipalRouter.post('/work/:code/reopen', municipal.reopen);
 municipalRouter.post('/work/:code/reject', municipal.reject);
+// Model comparison (staff only): RF-DETR vs RT-DETR vs YOLOv11
+municipalRouter.get('/comparison', municipal.comparisonList);
+municipalRouter.get('/comparison/models', uploads.listModels);
+// Any photo, nothing stored
+municipalRouter.post('/comparison/upload', rateLimit({ windowMs: 60_000, max: 20 }), upload.single('image'), uploads.compareModels);
+municipalRouter.get('/comparison/:code', municipal.comparisonGet);
+municipalRouter.post('/comparison/:code/run', rateLimit({ windowMs: 60_000, max: 20 }), municipal.comparisonRun);
 
 const analyticsRouter = express.Router();
 analyticsRouter.use(protect, requireRole('team_manager', 'municipal_officer'));

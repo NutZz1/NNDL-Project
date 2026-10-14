@@ -40,10 +40,68 @@ const IncidentSchema = new mongoose.Schema(
       enum: ['Low', 'Medium', 'High', 'Critical'],
       default: 'Medium',
     },
-    // Detector that analysed the photo (RF-DETR in production; YOLOv11 / RT-DETR when compared)
+    // Detector that decided the report. Always RF-DETR: the other models are only compared.
     detectorModel: {
       type: String,
       default: 'RF-DETR-Small',
+    },
+    // Raw output of every detector on this photo (RF-DETR before the verification agent,
+    // RT-DETR, YOLOv11), for the officer's Comparison view. Never used to dispatch.
+    modelResults: [
+      {
+        _id: false,
+        key: String, // rfdetr | rtdetr | yolov11
+        name: String,
+        role: String, // production | comparison
+        available: Boolean,
+        error: String,
+        hasDefect: Boolean,
+        category: String,
+        confidence: Number,
+        detectionsCount: Number,
+        bboxes: [{ _id: false, box: [Number], label: String, score: Number }],
+        candidates: [{ _id: false, box: [Number], label: String, score: Number }],
+        threshold: Number,
+        resolution: Number,
+        inferenceMs: Number,
+        device: String,
+        ranAt: Date,
+        gan: { applied: Boolean, name: String, ms: Number, reason: String, restoredFilename: String },
+      },
+    ],
+    // Same comparison with each detector's Pix2Pix GAN applied first (RT-DETR has none).
+    // Filled when the citizen asked for GAN enhancement, or when an officer runs it.
+    modelResultsGan: [
+      {
+        _id: false,
+        key: String,
+        name: String,
+        role: String,
+        available: Boolean,
+        error: String,
+        hasDefect: Boolean,
+        category: String,
+        confidence: Number,
+        detectionsCount: Number,
+        bboxes: [{ _id: false, box: [Number], label: String, score: Number }],
+        candidates: [{ _id: false, box: [Number], label: String, score: Number }],
+        threshold: Number,
+        resolution: Number,
+        inferenceMs: Number,
+        device: String,
+        ranAt: Date,
+        gan: { applied: Boolean, name: String, ms: Number, reason: String, restoredFilename: String },
+      },
+    ],
+    // Set only when the citizen ticked "Enhance photo with GAN": the report was decided on the
+    // GAN-restored photo (the original photo stays the evidence image).
+    gan: {
+      requested: Boolean,
+      applied: Boolean,
+      name: String,
+      ms: Number,
+      reason: String,
+      restoredImageUrl: String,
     },
     status: {
       type: String,

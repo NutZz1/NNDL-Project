@@ -6,12 +6,13 @@ import CivicAnalyticsPage from '../components/dashboard/CivicAnalyticsPage';
 import FilterBar from '../components/dashboard/FilterBar';
 import CivicMap from '../components/dashboard/CivicMap';
 import IncidentDetailModal from '../components/dashboard/IncidentDetailModal';
-import { Layers, ArrowLeft, Plus, MapPin, TrendingUp, LayoutGrid, LayoutDashboard, Gauge, Columns3, Eye, ArrowRightLeft, CheckCircle2, Bot, Search } from 'lucide-react';
+import { Layers, ArrowLeft, Plus, MapPin, TrendingUp, LayoutGrid, LayoutDashboard, Gauge, Columns3, Eye, ArrowRightLeft, CheckCircle2, Bot, Search, GitCompare } from 'lucide-react';
 import WorkQueue from '../components/work/WorkQueue';
 import WorkBoard from '../components/work/WorkBoard';
 import WorkItemView from '../components/work/WorkItemView';
 import OpsAnalytics from '../components/work/OpsAnalytics';
 import AssistantPanel from '../components/work/AssistantPanel';
+import ModelComparison from '../components/work/ModelComparison';
 import useNotifications from '../components/work/useNotifications';
 import { Card, Button, inputStyle, INK } from '../components/work/ui';
 import { api } from '../services/api';
@@ -44,6 +45,7 @@ export default function DashboardPage({
     { id: 'requests', label: 'Reassignments', icon: <ArrowRightLeft size={18} />, badge: counts ? counts.pendingRequests || '' : '', badgeAlert: Boolean(counts && counts.pendingRequests) },
     { id: 'completed', label: 'Completed', icon: <CheckCircle2 size={18} /> },
     { id: 'analytics', label: 'Analytics', icon: <TrendingUp size={18} /> },
+    { id: 'comparison', label: 'Comparison', icon: <GitCompare size={18} /> },
     { id: 'assistant', label: 'Assistant', icon: <Bot size={18} /> },
   ];
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -167,7 +169,7 @@ export default function DashboardPage({
         )}
 
         {/* WORKFLOW SECTIONS (Municipal Officer) */}
-        {['ops', 'work', 'triage', 'requests', 'completed', 'assistant'].includes(activeTab) && (
+        {['ops', 'work', 'triage', 'requests', 'completed', 'comparison', 'assistant'].includes(activeTab) && (
           <div style={{ padding: '0 32px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
             {activeTab === 'ops' && <OpsAnalytics onOpenTriage={() => setActiveTab('triage')} onOpenRequests={() => setActiveTab('requests')} />}
             {activeTab === 'work' && <WorkBoard onOpen={setOpenCode} refreshKey={refreshKey} />}
@@ -221,6 +223,7 @@ export default function DashboardPage({
             {activeTab === 'completed' && (
               <WorkQueue title="Completed work, both teams" status="completed" lockStatus teamFilter showTeam classes={ALL_CLASSES} onOpen={setOpenCode} refreshKey={refreshKey} emptyTitle="No completed work yet" />
             )}
+            {activeTab === 'comparison' && <ModelComparison />}
             {activeTab === 'assistant' && user && <AssistantPanel user={user} onOpen={setOpenCode} />}
           </div>
         )}

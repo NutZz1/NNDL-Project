@@ -15,6 +15,14 @@ const { teamName } = require('../services/teams');
 const { sign } = require('../services/imageAccess');
 const { normalizeCode } = require('../services/reportCodeService');
 const crypto = require('crypto');
+const connectDB = require('../config/db');
+
+// A report that cannot be stored must not look accepted: no tracking ID, no e-mail, no "success"
+const DB_UNAVAILABLE = {
+  success: false,
+  code: 'DB_UNAVAILABLE',
+  error: 'Your report could not be saved because the CivicScan database is not reachable right now. Nothing was submitted. Please try again in a few minutes.',
+};
 
 // The citizen may still move the map pin for a few minutes after uploading. They have no
 // account, so the upload response carries a short-lived token bound to this one report.
@@ -38,6 +46,8 @@ const checkEditToken = (code, token) => {
 const logScan = (row) => ScanLog.create(row).catch((e) => console.warn('[ScanLog] not written:', e.message));
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// Optional "Enhance photo with GAN" checkbox (multipart text field); anything else means off
+const wantsGan = (v) => /^(1|true|on|yes)$/i.test(String(v || '').trim());
 const EMAIL_TIMEOUT_MS = 12000;
 
 const removeUpload = async (file) => {
@@ -69,25 +79,50 @@ exports.processImage = async (req, res) => {
       });
     }
 
-    // 1. Execute PyTorch model inference (also extracts native EXIF via PIL).
-    // RF-DETR is the production model; YOLOv11 / RT-DETR can be chosen to compare them in the product.
-    const requestedModel = String(req.body.model || AiInferenceService.DEFAULT_MODEL).toLowerCase();
-    if (!AiInferenceService.MODEL_KEYS.includes(requestedModel)) {
+    if (!connectDB.isReady()) {
       await removeUpload(file);
-      return res.status(400).json({ success: false, code: 'UNKNOWN_MODEL', error: `Unknown model "${requestedModel}".` });
+      console.error('[UploadController] Upload refused: the database is not connected.');
+      return res.status(503).json(DB_UNAVAILABLE);
     }
+
+    // 1. Execute PyTorch model inference (also extracts native EXIF via PIL).
+    // Reports are always decided by RF-DETR, the production model. A citizen cannot choose a
+    // weaker detector: any `model` field in the request is ignored.
     const absoluteImagePath = path.resolve(file.path);
+    // Optional: restore the photo with RF-DETR's Pix2Pix GAN before detection (citizen's choice, off by default)
+    const enhance = wantsGan(req.body.enhance);
     let inferenceResult;
     try {
-      inferenceResult = await AiInferenceService.runInference(absoluteImagePath, { model: requestedModel });
+      inferenceResult = await AiInferenceService.runInference(absoluteImagePath, { model: AiInferenceService.DEFAULT_MODEL, enhance });
     } catch (inferErr) {
       // Never create a report from a guess: tell the citizen the model is offline
       await removeUpload(file);
-      console.error(`[UploadController] Inference failed (${requestedModel}): ${inferErr.message}`);
+      console.error(`[UploadController] Inference failed: ${inferErr.message}`);
       return res.status(inferErr.status || 503).json({ success: false, code: inferErr.code || 'MODEL_UNAVAILABLE', error: inferErr.message });
     }
     const detectorResult = inferenceResult; // kept so the report can show what the detector said originally
     const modelName = detectorResult.model;
+    // The photo the models read (a HEIC upload is converted to JPEG by the model service)
+    const analysedPath = path.join(path.dirname(absoluteImagePath), detectorResult.convertedFilename || file.filename);
+
+    // Every upload also goes through RT-DETR and YOLOv11 for the officer's Comparison view.
+    // They run while the verification agent works, and they never decide or dispatch anything.
+    // With the GAN on, the same comparison is also run with each model's GAN (reusing the RF-DETR
+    // run above), and the plain comparison is run separately so both can be compared.
+    const known = { [AiInferenceService.DEFAULT_MODEL]: detectorResult };
+    const comparison = (enhance
+      ? AiInferenceService.runAllModels(analysedPath, known, { enhance: true }).then(async (ganRows) => ({
+          rows: await AiInferenceService.runAllModels(analysedPath),
+          ganRows,
+        }))
+      : AiInferenceService.runAllModels(analysedPath, known).then((rows) => ({ rows, ganRows: null }))
+    ).catch((e) => {
+      console.warn('[Compare] comparison models did not run:', e.message);
+      return { rows: [], ganRows: null };
+    });
+    const logComparison = (rows) =>
+      rows.length &&
+      console.log(`[Compare] ${rows.map((r) => (r.available ? `${r.name}: ${r.hasDefect ? `${r.category} @ ${Math.round(r.confidence * 100)}%` : 'clean'} in ${Math.round(r.inferenceMs || 0)}ms` : `${r.name}: n/a`)).join(' | ')}`);
 
     console.log(
       `[UploadController] ${modelName} Detection: "${inferenceResult.category}" (Defect: ${inferenceResult.hasDefect}, Count: ${inferenceResult.detectionsCount}) in ${inferenceResult.inferenceMs}ms on ${inferenceResult.device}`
@@ -144,13 +179,12 @@ exports.processImage = async (req, res) => {
       VerificationAgent.enabled() &&
       (VerificationAgent.mode() === 'all' || !confidentFound || inferenceResult.confidence < DispatchAgent.getMinConfidence())
     ) {
-      const storedForCheck = inferenceResult.convertedFilename || file.filename;
       const boxes = [...(confidentFound ? inferenceResult.bboxes : []), ...candidates];
       const forReview = confidentFound
         ? { ...inferenceResult, bboxes: boxes }
         : { ...inferenceResult, bboxes: boxes, category: boxes[0].label, confidence: boxes[0].score, hasDefect: true, detectionsCount: boxes.length };
       const result = await VerificationAgent.review({
-        imagePath: path.join(path.dirname(absoluteImagePath), storedForCheck),
+        imagePath: analysedPath,
         detections: boxes,
       });
       aiReview = VerificationAgent.apply(forReview, result);
@@ -165,6 +199,27 @@ exports.processImage = async (req, res) => {
       inferenceResult.hasDefect && (inferenceResult.bboxes || []).length > 0 && inferenceResult.category !== 'clean';
     const llmSaysClean = Boolean(aiReview && aiReview.performed && aiReview.verdict === 'removed');
 
+    const { rows: modelResults, ganRows: modelResultsGan } = await comparison;
+    logComparison(modelResults);
+    if (modelResultsGan) logComparison(modelResultsGan.map((r) => ({ ...r, name: `${r.name} + GAN` })));
+    // Restored photos written by the GAN runs (deleted again if the photo is discarded)
+    const ganFiles = [
+      ...new Set(
+        [detectorResult.gan && detectorResult.gan.restoredFilename, ...(modelResultsGan || []).map((r) => r.gan && r.gan.restoredFilename)].filter(Boolean)
+      ),
+    ];
+    const ganRecord = enhance
+      ? {
+          requested: true,
+          applied: Boolean(detectorResult.gan && detectorResult.gan.applied),
+          name: (detectorResult.gan && detectorResult.gan.name) || null,
+          ms: (detectorResult.gan && detectorResult.gan.ms) ?? null,
+          reason: (detectorResult.gan && detectorResult.gan.reason) || (detectorResult.gan ? null : 'The model service did not apply the GAN'),
+          restoredImageUrl: detectorResult.gan && detectorResult.gan.restoredFilename ? `/uploads/${detectorResult.gan.restoredFilename}` : null,
+        }
+      : null;
+    if (ganRecord) console.log(`[GAN] ${ganRecord.applied ? `${ganRecord.name} applied in ${ganRecord.ms} ms` : `not applied: ${ganRecord.reason}`}`);
+
     // If image has no civic defects (detector, or the second AI check), discard it immediately
     if (!detectorFoundDefect || llmSaysClean) {
       logScan({
@@ -174,13 +229,9 @@ exports.processImage = async (req, res) => {
         outcome: llmSaysClean ? 'discarded_by_ai' : 'discarded_clean',
       });
       console.log(`[UploadController] 🗑️ Clean image verified${llmSaysClean ? ` by ${modelName} + second AI check` : ` by ${modelName}`}. Discarding file: ${file.filename}`);
-      try {
-        if (fs.existsSync(file.path)) {
-          await fs.promises.unlink(file.path);
-        }
-      } catch (unlinkErr) {
-        console.warn('[UploadController] Error removing discarded image:', unlinkErr.message);
-      }
+      await removeUpload(file);
+      if (analysedPath !== path.resolve(file.path)) await removeUpload({ path: analysedPath });
+      for (const f of ganFiles) await removeUpload({ path: path.join(path.dirname(absoluteImagePath), f) });
 
       return res.json({
         success: true,
@@ -222,6 +273,9 @@ exports.processImage = async (req, res) => {
       imageUrl: relativeImageUrl,
       confidence: inferenceResult.confidence,
       detectorModel: modelName,
+      modelResults,
+      ...(modelResultsGan ? { modelResultsGan } : {}),
+      ...(ganRecord ? { gan: ganRecord } : {}),
       detectedBboxes: inferenceResult.bboxes.map((b) => ({
         box: b.box,
         label: b.label,
@@ -308,11 +362,13 @@ exports.processImage = async (req, res) => {
       savedIncident = await Incident.create(incidentPayload);
       console.log(`[UploadController] Saved incident to MongoDB Atlas with ID: ${savedIncident._id}`);
     } catch (dbErr) {
-      console.warn(`[UploadController] MongoDB Atlas save notice (${dbErr.message}). Storing in local memory.`);
-      incidentPayload._id = `inc-${Date.now()}`;
-      incidentPayload.createdAt = new Date().toISOString();
-      incidentController.getMemoryStore().unshift(incidentPayload);
-      savedIncident = incidentPayload;
+      // Never pretend: a report kept only in memory would vanish on restart while the citizen
+      // already holds its tracking ID. Remove the photos and tell the citizen to try again.
+      console.error(`[UploadController] Report NOT saved (${dbErr.message}). Upload refused.`);
+      await removeUpload(file);
+      if (analysedPath !== path.resolve(file.path)) await removeUpload({ path: analysedPath });
+      for (const f of ganFiles) await removeUpload({ path: path.join(path.dirname(absoluteImagePath), f) });
+      return res.status(503).json(DB_UNAVAILABLE);
     }
 
     logScan({
@@ -346,6 +402,9 @@ exports.processImage = async (req, res) => {
     const publicIncident = (typeof savedIncident.toObject === 'function' ? savedIncident.toObject() : { ...savedIncident });
     if (publicIncident.reportedBy) publicIncident.reportedBy = { name: publicIncident.reportedBy.name };
     publicIncident.imageUrl = sign(publicIncident.imageUrl);
+    if (publicIncident.gan && publicIncident.gan.restoredImageUrl) {
+      publicIncident.gan = { ...publicIncident.gan, restoredImageUrl: sign(publicIncident.gan.restoredImageUrl) };
+    }
     // Staff-only details stay on the server
     delete publicIncident.statusHistory;
     delete publicIncident.reassignments;
@@ -363,6 +422,7 @@ exports.processImage = async (req, res) => {
           previewUrl: emailInfo.previewUrl || null,
         },
         imageUrl: sign(relativeImageUrl),
+        ...(ganRecord ? { gan: { ...ganRecord, restoredImageUrl: ganRecord.restoredImageUrl ? sign(ganRecord.restoredImageUrl) : null } } : {}),
         metadata: {
           hasGps: hasGps,
           latitude: finalLat,
@@ -390,14 +450,14 @@ exports.processImage = async (req, res) => {
   }
 };
 
-// POST /api/upload/compare-models  (multipart: image)
+// POST /api/municipal/comparison/upload  (multipart: image, Municipal Officer only)
 // Runs every trained detector on the same photo for the model comparison page. Nothing is
 // stored: no report, no e-mail, and the uploaded file is deleted afterwards.
 exports.compareModels = async (req, res) => {
   const file = req.file;
   if (!file) return res.status(400).json({ success: false, error: 'No image file uploaded.' });
   try {
-    const data = await AiInferenceService.compareModels(path.resolve(file.path));
+    const data = await AiInferenceService.compareModels(path.resolve(file.path), { enhance: wantsGan(req.body.enhance) });
     const ran = Object.values(data.results).filter((r) => r.available);
     console.log(
       `[Compare] ${ran.map((r) => `${r.model}: ${r.category} @ ${Math.round((r.confidence || 0) * 100)}% in ${r.inferenceMs}ms`).join(' | ')}`
@@ -414,7 +474,7 @@ exports.compareModels = async (req, res) => {
   }
 };
 
-// GET /api/models
+// GET /api/municipal/comparison/models  (Municipal Officer only)
 // Every detector with its availability, checkpoint and saved test-set metrics
 exports.listModels = async (req, res) => {
   try {

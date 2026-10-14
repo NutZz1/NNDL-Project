@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import Navbar from '../components/common/Navbar';
 import Footer from '../components/common/Footer';
 import ImageDropzone from '../components/upload/ImageDropzone';
-import ModelSelector from '../components/upload/ModelSelector';
 import ExifDataViewer from '../components/upload/ExifDataViewer';
 import LocationPickerMap from '../components/upload/LocationPickerMap';
 import { CheckCircle2, ArrowRight, UploadCloud, MapPin, Sparkles, Mail, Copy, Search, Check, Clock } from 'lucide-react';
@@ -24,7 +23,8 @@ export default function UploadPage({
   const [email, setEmail] = useState(getSavedEmail);
   const [emailTouched, setEmailTouched] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('rfdetr');
+  // Optional: restore the photo with the Pix2Pix GAN before RF-DETR analyses it (off by default)
+  const [enhanceGan, setEnhanceGan] = useState(false);
 
   const emailValid = EMAIL_RE.test(email.trim());
   const showEmailError = emailTouched && !emailValid;
@@ -642,11 +642,71 @@ export default function UploadPage({
               )}
             </div>
 
-            {/* Which trained detector analyses the photo (RF-DETR by default) */}
-            <ModelSelector value={selectedModel} onChange={setSelectedModel} />
+            {/* Optional GAN enhancement before detection */}
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                background: '#ffffff',
+                border: `1px solid ${enhanceGan ? '#10b981' : '#e2e8f0'}`,
+                borderRadius: '12px',
+                padding: '12px 16px',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={enhanceGan}
+                onChange={(e) => setEnhanceGan(e.target.checked)}
+                style={{ marginTop: '3px', width: '16px', height: '16px', accentColor: '#059669', flexShrink: 0 }}
+              />
+              <span>
+                <span style={{ display: 'block', fontWeight: 700, color: '#0f172a', fontSize: '0.92rem' }}>Enhance photo with GAN before analysis</span>
+                <span style={{ display: 'block', color: '#64748b', fontSize: '0.82rem', lineHeight: 1.5, marginTop: '2px' }}>
+                  Optional, for dark, blurred or noisy photos. A Pix2Pix GAN restores the photo and RF-DETR analyses the restored version. Your original
+                  photo is kept as the evidence. On clear photos it can make detection worse, so leave it off unless the photo is poor.
+                </span>
+              </span>
+            </label>
 
             {/* Step 1: Dropzone (enabled once a valid email is entered) */}
-            <ImageDropzone onImageProcessed={handleImageProcessed} email={email.trim()} disabled={!emailValid} model={selectedModel} />
+            <ImageDropzone onImageProcessed={handleImageProcessed} email={email.trim()} disabled={!emailValid} enhance={enhanceGan} />
+
+            {/* GAN enhancement result (only when the citizen ticked the box) */}
+            {imageData && !imageData.discarded && imageData.gan && (
+              <div
+                style={{
+                  borderRadius: '12px',
+                  padding: '12px 16px',
+                  fontSize: '0.88rem',
+                  lineHeight: 1.5,
+                  background: imageData.gan.applied ? '#f5f3ff' : '#f8fafc',
+                  border: `1px solid ${imageData.gan.applied ? '#ddd6fe' : '#e2e8f0'}`,
+                  color: '#334155',
+                  display: 'flex',
+                  gap: '14px',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}
+              >
+                {imageData.gan.applied && imageData.gan.restoredImageUrl && (
+                  <img
+                    src={imageData.gan.restoredImageUrl}
+                    alt="Photo after GAN enhancement"
+                    style={{ width: '120px', height: '90px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #ddd6fe' }}
+                  />
+                )}
+                <div style={{ flex: 1, minWidth: '200px' }}>
+                  <strong>{imageData.gan.applied ? 'Photo enhanced with GAN' : 'GAN enhancement was not applied'}</strong>
+                  <div>
+                    {imageData.gan.applied
+                      ? `${imageData.gan.name || 'Pix2Pix GAN'} restored the photo${imageData.gan.ms ? ` in ${Math.round(imageData.gan.ms)} ms` : ''}; RF-DETR analysed the restored version.`
+                      : `${imageData.gan.reason || 'The GAN is not available'}. RF-DETR analysed your original photo.`}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Second AI check on the detector's result */}
             {imageData && !imageData.discarded && imageData.aiReview && (

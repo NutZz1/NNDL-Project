@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, LogIn, LayoutDashboard, Menu, X, Leaf, UploadCloud, Search, BarChart3 } from 'lucide-react';
+import { ShieldCheck, LogIn, LayoutDashboard, Menu, X, Leaf, UploadCloud, Search } from 'lucide-react';
 
 export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedIn }) {
   const [scrolled, setScrolled] = useState(false);
@@ -38,15 +38,14 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
         backdropFilter: scrolled ? 'blur(12px)' : 'none',
         borderBottom: '1px solid var(--border-color)',
         boxShadow: scrolled ? '0 4px 20px rgba(0,0,0,0.06)' : 'none',
-        padding: '0 24px',
+        padding: '0 32px',
       }}
     >
+      {/* Full width: the logo sits at the left edge and the action buttons at the right edge */}
       <div
         className="navbar-inner"
         style={{
           width: '100%',
-          maxWidth: '1280px',
-          margin: '0 auto',
           height: '72px',
           display: 'flex',
           alignItems: 'center',
@@ -198,26 +197,6 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
             onMouseOut={(e) => (e.target.style.color = '#334155')}
           >
             UN SDGs
-          </button>
-          {/* Side-by-side comparison of every trained detector */}
-          <button
-            onClick={() => onNavigate('compare')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              fontSize: '0.9rem',
-              fontWeight: 700,
-              color: '#3730a3',
-              padding: '6px 2px',
-              borderBottom: currentPage === 'compare' ? '2px solid #3730a3' : '2px solid transparent',
-              background: 'none',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <BarChart3 size={15} />
-            Compare
           </button>
         </nav>
 
@@ -396,28 +375,6 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
             <span>Track Report</span>
           </button>
           <button
-            onClick={() => {
-              setMobileMenuOpen(false);
-              onNavigate('compare');
-            }}
-            style={{
-              textAlign: 'left',
-              padding: '8px 0',
-              fontSize: '1rem',
-              fontWeight: 700,
-              color: '#3730a3',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <BarChart3 size={18} />
-            <span>Compare Models</span>
-          </button>
-          <button
             onClick={() => handleNavClick('about')}
             style={{ textAlign: 'left', padding: '8px 0', fontSize: '1rem', fontWeight: 600, color: '#1e293b', background: 'none', border: 'none', cursor: 'pointer' }}
           >
@@ -446,10 +403,12 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
 
       {/* Responsive Inline Media Query Style */}
       <style>{`
-        @media (min-width: 900px) {
+        @media (min-width: 1240px) {
           .navbar-inner {
             display: grid !important;
-            grid-template-columns: 1fr auto 1fr !important;
+            /* logo | links centred in the space left between | actions */
+            grid-template-columns: auto 1fr auto !important;
+            column-gap: 32px;
           }
           .desktop-nav { 
             display: flex !important;
@@ -457,7 +416,7 @@ export default function Navbar({ currentPage, onNavigate, onOpenLogin, isLoggedI
           }
           .mobile-toggle { display: none !important; }
         }
-        @media (max-width: 899px) {
+        @media (max-width: 1239px) {
           .desktop-nav { display: none !important; }
           .mobile-toggle { display: flex !important; }
         }

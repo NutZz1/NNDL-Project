@@ -22,7 +22,8 @@ const INFERENCE_BASE = INFERENCE_URL.replace(/\/predict\/?$/, '');
 
 const MODEL_KEYS = ['rfdetr', 'yolov11', 'rtdetr'];
 const DEFAULT_MODEL = 'rfdetr';
-const MODEL_NAMES = { rfdetr: 'RF-DETR-Small', yolov11: 'YOLOv11-s', rtdetr: 'RT-DETR (ResNet-50)' };
+const MODEL_NAMES = { rfdetr: 'RF-DETR-Small', yolov11: 'YOLOv11-s', rtdetr: 'RT-DETR (ResNet-18)' };
+const MODEL_ROLES = { rfdetr: 'production', yolov11: 'comparison', rtdetr: 'comparison' };
 
 // RF-DETR thresholds can be tuned from the environment: 0.40 for every class, 0.50 for litter
 // (it over-triggers on grey textured surfaces). Boxes between CANDIDATE_FLOOR and the threshold
@@ -74,6 +75,16 @@ function shapeResult(data, model, t0, viaCli = false) {
     exif: data.exif || null,
     isRealModel: true,
   };
+  if (data.gan) {
+    base.gan = {
+      applied: Boolean(data.gan.applied),
+      name: data.gan.name || null,
+      ms: data.gan.ms ?? null,
+      reason: data.gan.reason || null,
+      restoredFilename: data.gan.restored_filename || null,
+      restoredPreview: data.gan.restored_preview || null,
+    };
+  }
   if (data.has_defect === false || (data.detections_count === 0 && data.category === 'clean')) {
     return {
       ...base,
@@ -137,24 +148,28 @@ class AiInferenceService {
    * @param {string} imagePath Full absolute path to image on disk
    * @param {object} [opts]
    * @param {string} [opts.model] 'rfdetr' (default) | 'yolov11' | 'rtdetr'
+   * @param {boolean} [opts.cliFallback] start Python once if the microservice is down (default true)
+   * @param {boolean} [opts.enhance] restore the photo with the model's Pix2Pix GAN first (default false)
    * @throws {InferenceUnavailableError} when neither the microservice nor the CLI can run the model
    */
-  static async runInference(imagePath, { model = DEFAULT_MODEL } = {}) {
+  static async runInference(imagePath, { model = DEFAULT_MODEL, cliFallback = true, enhance = false } = {}) {
     model = normalizeModel(model);
     const t0 = Date.now();
     const thresholds = model === 'rfdetr' ? { score_thresh: SCORE_THRESH, class_thresh: CLASS_THRESH, candidate_floor: CANDIDATE_FLOOR } : {};
     try {
       // 1. Fast HTTP call to the inference microservice on port 5001
-      const data = await postJson(INFERENCE_URL, { image_path: imagePath, model, ...thresholds });
+      const data = await postJson(INFERENCE_URL, { image_path: imagePath, model, ...thresholds, ...(enhance ? { enhance: true } : {}) });
       return shapeResult(data, model, t0);
     } catch (httpErr) {
       // The service answered but this model has no checkpoint: no point trying the CLI
       if (httpErr.code === 'MODEL_UNAVAILABLE') throw new InferenceUnavailableError(httpErr.message);
+      if (!cliFallback) throw new InferenceUnavailableError(`The model service is not running (${httpErr.message}).`);
       console.warn(`[AI Inference Service] HTTP to inference service failed (${httpErr.message}). Attempting CLI fallback...`);
     }
 
     // 2. Fallback: run the Python inference once via the CLI
     const args = ['--image', imagePath, '--model', model];
+    if (enhance) args.push('--enhance');
     if (model === 'rfdetr') {
       args.push('--thresh', String(SCORE_THRESH), '--candidate-floor', String(CANDIDATE_FLOOR));
       Object.entries(CLASS_THRESH).forEach(([k, v]) => args.push('--class-thresh', `${k}=${v}`));
@@ -164,14 +179,14 @@ class AiInferenceService {
   }
 
   /** Runs every available detector on the same image (for the model comparison page) */
-  static async compareModels(imagePath) {
+  static async compareModels(imagePath, { enhance = false } = {}) {
     const t0 = Date.now();
     let data;
     try {
-      data = await postJson(`${INFERENCE_BASE}/compare`, { image_path: imagePath });
+      data = await postJson(`${INFERENCE_BASE}/compare`, { image_path: imagePath, ...(enhance ? { enhance: true } : {}) });
     } catch (httpErr) {
       console.warn(`[AI Inference Service] /compare failed (${httpErr.message}). Attempting CLI fallback...`);
-      data = await AiInferenceService.runCli(['--image', imagePath, '--compare']);
+      data = await AiInferenceService.runCli(['--image', imagePath, '--compare', ...(enhance ? ['--enhance'] : [])]);
     }
     const results = {};
     for (const key of MODEL_KEYS) {
@@ -183,6 +198,55 @@ class AiInferenceService {
       }
     }
     return { imageSize: data.image_size || null, results };
+  }
+
+  /**
+   * Compact record of one model's output, as stored on a report (Incident.modelResults)
+   * for the officer's Comparison view. `result` is a runInference() result or an Error.
+   */
+  static summarize(key, result) {
+    const base = { key, name: MODEL_NAMES[key], role: MODEL_ROLES[key], ranAt: new Date() };
+    if (!result || result instanceof Error) {
+      return { ...base, available: false, error: (result && result.message) || 'Model not available' };
+    }
+    const boxes = (list) => (list || []).filter((b) => Array.isArray(b.box)).map((b) => ({ box: b.box, label: b.label, score: b.score }));
+    return {
+      ...base,
+      name: String(result.model || base.name).replace(/ \(CLI\)$/, ''),
+      available: true,
+      hasDefect: Boolean(result.hasDefect),
+      category: result.category,
+      confidence: result.confidence || 0,
+      detectionsCount: result.detectionsCount || 0,
+      bboxes: boxes(result.bboxes),
+      candidates: boxes(result.candidates),
+      threshold: result.thresholds && typeof result.thresholds.default === 'number' ? result.thresholds.default : undefined,
+      resolution: result.resolution || undefined,
+      inferenceMs: result.inferenceMs,
+      device: result.device,
+      ...(result.gan
+        ? { gan: { applied: result.gan.applied, name: result.gan.name, ms: result.gan.ms, reason: result.gan.reason, restoredFilename: result.gan.restoredFilename } }
+        : {}),
+    };
+  }
+
+  /**
+   * Runs every detector on one photo and returns one summary per model, in MODEL_KEYS order.
+   * Pass `known` ({ rfdetr: result }) to reuse a run that already happened. The comparison
+   * models never fall back to the slow CLI: if the service is down they are reported as
+   * unavailable instead of holding up the citizen's upload.
+   */
+  static async runAllModels(imagePath, known = {}, { enhance = false } = {}) {
+    const out = [];
+    // The model service handles one request at a time, so run them one after another
+    for (const key of MODEL_KEYS) {
+      let result = known[key];
+      if (!result) {
+        result = await AiInferenceService.runInference(imagePath, { model: key, cliFallback: false, enhance }).catch((e) => e);
+      }
+      out.push(AiInferenceService.summarize(key, result));
+    }
+    return out;
   }
 
   /** Model catalogue with availability and saved test metrics */

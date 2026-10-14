@@ -41,26 +41,17 @@ const qs = (params = {}) => {
 export const api = {
   // ---------------------------------------------------------------- public (citizens)
   // `email` is required: the report ID is sent there so the citizen can track the report
-  async uploadAndAnalyzeImage(file, manualCoords = {}, email = '', model = 'rfdetr') {
+  // Reports are always analysed by RF-DETR; the server also runs the comparison models for staff
+  // `opts.enhance` (optional) restores the photo with RF-DETR's Pix2Pix GAN before detection
+  async uploadAndAnalyzeImage(file, manualCoords = {}, email = '', opts = {}) {
     const form = new FormData();
     form.append('image', file);
     form.append('email', email);
-    form.append('model', model);
+    if (opts.enhance) form.append('enhance', 'true');
     if (manualCoords.lat) form.append('manualLat', manualCoords.lat);
     if (manualCoords.lng) form.append('manualLng', manualCoords.lng);
     const json = await request('/upload/process-image', { method: 'POST', form, auth: false });
     return { ...(json.data || {}), discarded: Boolean(json.discarded), message: json.message || '' };
-  },
-
-  // Model comparison: every trained detector on the same photo (nothing is stored)
-  async compareModels(file) {
-    const form = new FormData();
-    form.append('image', file);
-    return (await request('/upload/compare-models', { method: 'POST', form, auth: false })).data;
-  },
-  // Detector catalogue: availability, checkpoint and saved test-set metrics
-  async listModels() {
-    return (await request('/upload/models', { auth: false })).data;
   },
 
   // The citizen may fix the map pin for 30 minutes after uploading (no account needed)
@@ -146,6 +137,23 @@ export const api = {
       (await request(`/municipal/work/${encodeURIComponent(code)}/reassign`, { method: 'POST', body: { toTeam, reason } })).data,
     reopen: async (code, reason) => (await request(`/municipal/work/${encodeURIComponent(code)}/reopen`, { method: 'POST', body: { reason } })).data,
     reject: async (code, reason) => (await request(`/municipal/work/${encodeURIComponent(code)}/reject`, { method: 'POST', body: { reason } })).data,
+    // Model comparison: RF-DETR vs RT-DETR vs YOLOv11 (every upload is run through all three)
+    comparison: {
+      list: async (params = {}) => (await request(`/municipal/comparison${qs(params)}`)).data,
+      get: async (code) => (await request(`/municipal/comparison/${encodeURIComponent(code)}`)).data,
+      // `enhance`: run each model on its own GAN-restored photo (saved separately from the plain run)
+      run: async (code, { enhance = false } = {}) =>
+        (await request(`/municipal/comparison/${encodeURIComponent(code)}/run`, { method: 'POST', ...(enhance ? { body: { enhance: true } } : {}) })).data,
+      // Detector catalogue: availability, checkpoint and saved test-set metrics
+      models: async () => (await request('/municipal/comparison/models')).data,
+      // Any photo, every model, nothing stored
+      upload: async (file, { enhance = false } = {}) => {
+        const form = new FormData();
+        form.append('image', file);
+        if (enhance) form.append('enhance', 'true');
+        return (await request('/municipal/comparison/upload', { method: 'POST', form })).data;
+      },
+    },
   },
 
   // ---------------------------------------------------------------- analytics, badges, assistant

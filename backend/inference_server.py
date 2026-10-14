@@ -10,6 +10,8 @@ Endpoints:
   POST /predict  - JSON {"image_path": "...", "model": "rfdetr"|"yolov11"|"rtdetr"} or raw binary image
                    Returns predicted defect class, confidence, bounding boxes, and latency.
   POST /compare  - JSON {"image_path": "..."}: runs every available model on the same image
+  Both accept "enhance": true to restore the photo first with the Pix2Pix GAN trained for that
+  detector (backend/gan/gan_<model>.py). Off by default; without it nothing changes.
 
 Can also be invoked via CLI:
   python inference_server.py --image <path_to_image> [--model yolov11]
@@ -80,8 +82,8 @@ MODEL_SPECS = {
         "thresh": 0.2, "class_thresh": {}, "floor": 0.1,
     },
     "rtdetr": {
-        "name": "RT-DETR (ResNet-50)",
-        "architecture": "Transformer detector, ResNet-50 backbone + hybrid encoder, 300 queries, no NMS",
+        "name": "RT-DETR (ResNet-18)",
+        "architecture": "Transformer detector, ResNet-18 backbone + hybrid encoder, 300 queries, no NMS",
         "role": "comparison",
         "runs": ["rtdetr*"],
         "env": "CIVICSCAN_CKPT_RTDETR",
@@ -228,6 +230,88 @@ def model_catalog():
             **info,
         })
     return out
+
+
+# ---------------------------------------------------------------- optional GAN enhancement
+# Each detector uses the Pix2Pix GAN that was trained and evaluated with it in Lab Eval 2
+# (backend/gan/README.md). RT-DETR has none. Used only when a request asks for "enhance".
+GAN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gan")
+GAN_SPECS = {
+    "rfdetr": {"module": "gan_rfdetr", "weights": os.path.join(RUNS_DIR, "gan_rfdetr", "best_generator.pt"),
+               "env": "CIVICSCAN_GAN_RFDETR"},
+    "yolov11": {"module": "gan_yolov11", "weights": os.path.join(RUNS_DIR, "gan_yolov11", "G_final.pt"),
+                "env": "CIVICSCAN_GAN_YOLOV11"},
+}
+GANS = {}  # key -> {"module", "G", "info"}
+
+
+def gan_weights(key):
+    spec = GAN_SPECS.get(key)
+    if not spec:
+        return None
+    path = os.environ.get(spec["env"]) or spec["weights"]
+    return path if os.path.exists(path) else None
+
+
+def load_gan(key):
+    """Loads the GAN for a detector on first use. Raises if it has none or its weights are missing."""
+    if key in GANS:
+        return GANS[key]
+    if key not in GAN_SPECS:
+        raise LookupError(f"No GAN was trained for {MODEL_SPECS[key]['name']}")
+    weights = gan_weights(key)
+    if not weights:
+        raise LookupError(f"GAN weights for {MODEL_SPECS[key]['name']} not found ({GAN_SPECS[key]['weights']})")
+    import importlib
+    if GAN_DIR not in sys.path:
+        sys.path.insert(0, GAN_DIR)
+    module = importlib.import_module(GAN_SPECS[key]["module"])
+    t0 = time.time()
+    G = module.load_generator(weights, device=str(GLOBAL_DEVICE))
+    info = dict(getattr(module, "INFO", {}))
+    GANS[key] = {"module": module, "G": G, "info": info, "weights": weights}
+    print(f"[GAN] {info.get('name', key)} loaded for {MODEL_SPECS[key]['name']} on {GLOBAL_DEVICE} "
+          f"in {round(time.time() - t0, 2)}s")
+    return GANS[key]
+
+
+def gan_catalog():
+    """Which detectors have a GAN available (for the UI)."""
+    out = {}
+    for key, spec in MODEL_SPECS.items():
+        if key in GANS:
+            out[key] = {"available": True, "name": GANS[key]["info"].get("name"), "loaded": True}
+        elif key in GAN_SPECS and gan_weights(key):
+            out[key] = {"available": True, "name": GAN_SPECS[key]["module"], "loaded": False}
+        else:
+            out[key] = {"available": False, "reason": "No GAN was trained for this detector"
+                        if key not in GAN_SPECS else "GAN weights not found"}
+    return out
+
+
+def enhance_image(img, key):
+    """Restores `img` with the detector's GAN. Returns (image to analyse, gan info).
+    Never raises: if there is no usable GAN the original image is returned with the reason."""
+    try:
+        gan = load_gan(key)
+        t0 = time.time()
+        restored = gan["module"].restore(gan["G"], img)
+        if restored.size != img.size:  # boxes must line up with the original photo
+            restored = restored.resize(img.size, Image.BICUBIC)
+        return restored.convert("RGB"), {"applied": True, "name": gan["info"].get("name", key),
+                                         "ms": round((time.time() - t0) * 1000, 1)}
+    except Exception as e:
+        return img, {"applied": False, "reason": str(e)}
+
+
+def _preview_data_url(img, max_side=1280):
+    """Small JPEG of an image as a data URL, for showing a restored photo that is not stored."""
+    import base64
+    im = img.copy()
+    im.thumbnail((max_side, max_side))
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=85)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def extract_gps_from_pil(img):
@@ -449,8 +533,9 @@ def run_inference_on_pil(img, score_thresh=None, class_thresh=None, exif_img=Non
     }
 
 
-def compare_on_pil(img, exif_img=None):
-    """Run every available model on the same image, each with its own default thresholds."""
+def compare_on_pil(img, exif_img=None, enhance=False):
+    """Run every available model on the same image, each with its own default thresholds.
+    With enhance=True each model first gets the photo restored by its own GAN (if it has one)."""
     results = {}
     for key, spec in MODEL_SPECS.items():
         if key not in LOADED and not find_checkpoint(key):
@@ -458,7 +543,14 @@ def compare_on_pil(img, exif_img=None):
                             "error": f"{spec['name']} checkpoint not found"}
             continue
         try:
-            results[key] = {"available": True, **run_inference_on_pil(img, exif_img=exif_img, model_key=key)}
+            if enhance:
+                src, gan = enhance_image(img, key)
+                res = run_inference_on_pil(src, exif_img=exif_img if exif_img is not None else img, model_key=key)
+                if gan["applied"]:
+                    gan["restored_preview"] = _preview_data_url(src)
+                results[key] = {"available": True, **res, "gan": gan}
+            else:
+                results[key] = {"available": True, **run_inference_on_pil(img, exif_img=exif_img, model_key=key)}
         except Exception as e:
             results[key] = {"success": False, "available": False, "model": spec["name"], "model_key": key, "error": str(e)}
     return {"success": True, "image_size": list(img.size), "results": results}
@@ -505,10 +597,11 @@ class InferenceHTTPHandler(BaseHTTPRequestHandler):
                 "loaded_models": [MODEL_SPECS[k]["name"] for k in LOADED],
                 "device": str(GLOBAL_DEVICE),
                 "checkpoints": {k: v["info"]["checkpoint_path"] for k, v in LOADED.items()},
+                "gans": gan_catalog(),
                 "timestamp": time.time(),
             })
         elif self.path == "/models":
-            self._send_json(200, {"success": True, "default": DEFAULT_MODEL, "models": model_catalog()})
+            self._send_json(200, {"success": True, "default": DEFAULT_MODEL, "models": model_catalog(), "gans": gan_catalog()})
         else:
             self._send_json(404, {"error": "Not found"})
 
@@ -532,12 +625,21 @@ class InferenceHTTPHandler(BaseHTTPRequestHandler):
                 # Raw image binary upload
                 img, raw = open_upright(io.BytesIO(body))
 
+            enhance = data.get("enhance") is True
             if self.path == "/compare":
-                result = compare_on_pil(img, exif_img=raw)
+                result = compare_on_pil(img, exif_img=raw, enhance=enhance)
             else:
                 model_key = data.get("model") or DEFAULT_MODEL
                 if model_key not in MODEL_SPECS:
                     return self._send_json(400, {"error": f"Unknown model '{model_key}'. Choose one of: {', '.join(MODEL_SPECS)}"})
+                gan = None
+                if enhance:
+                    # photo -> GAN restore -> detector; GPS still comes from the original photo
+                    img, gan = enhance_image(img, model_key)
+                    if gan["applied"] and data.get("image_path"):
+                        out_path = os.path.splitext(data["image_path"])[0] + f"_gan_{model_key}.jpg"
+                        img.save(out_path, format="JPEG", quality=92)
+                        gan["restored_filename"] = os.path.basename(out_path)
                 result = run_inference_on_pil(
                     img,
                     score_thresh=_optional_float(data.get("score_thresh")),
@@ -546,6 +648,8 @@ class InferenceHTTPHandler(BaseHTTPRequestHandler):
                     candidate_floor=_optional_float(data.get("candidate_floor")),
                     model_key=model_key,
                 )
+                if gan is not None:
+                    result["gan"] = gan
             if converted_filename:
                 result["converted_filename"] = converted_filename
             self._send_json(200, result)
@@ -596,6 +700,7 @@ if __name__ == "__main__":
                         help="Model for --image / --test")
     parser.add_argument("--image", type=str, default=None, help="Run single image inference and print JSON")
     parser.add_argument("--compare", action="store_true", help="With --image: run every available model")
+    parser.add_argument("--enhance", action="store_true", help="With --image: restore the photo with the model's GAN first")
     parser.add_argument("--test", action="store_true", help="Run test on dummy image and exit")
     parser.add_argument("--thresh", type=float, default=None, help="Detection score threshold (default: the model's own)")
     parser.add_argument("--candidate-floor", type=float, default=None,
@@ -620,11 +725,20 @@ if __name__ == "__main__":
             sys.exit(1)
         img, raw, converted_filename = _open_from_path(args.image)
         if args.compare:
-            res = compare_on_pil(img, exif_img=raw)
+            res = compare_on_pil(img, exif_img=raw, enhance=args.enhance)
         else:
             cli_class = {k: float(v) for k, v in (x.split("=") for x in args.class_thresh)} or None
+            gan = None
+            if args.enhance:
+                img, gan = enhance_image(img, args.model)
+                if gan["applied"]:
+                    out_path = os.path.splitext(args.image)[0] + f"_gan_{args.model}.jpg"
+                    img.save(out_path, format="JPEG", quality=92)
+                    gan["restored_filename"] = os.path.basename(out_path)
             res = run_inference_on_pil(img, score_thresh=args.thresh, class_thresh=cli_class, exif_img=raw,
                                        candidate_floor=args.candidate_floor, model_key=args.model)
+            if gan is not None:
+                res["gan"] = gan
         if converted_filename:
             res["converted_filename"] = converted_filename
         print(json.dumps(res, indent=2))

@@ -30,6 +30,7 @@ app.get('/api/health', (req, res) => {
     service: 'CivicScan Backend API',
     modelAlignment: 'RF-DETR (production) + YOLOv11 / RT-DETR (comparison), 8 locked classes',
     sdgImpact: ['SDG-11 Sustainable Cities', 'SDG-12 Responsible Waste', 'SDG-13 Climate Action'],
+    database: connectDB.isReady() ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString(),
   });
 });
